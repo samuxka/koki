@@ -1,0 +1,29 @@
+{
+  "name": "koki-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Koki - SaaS de Gestão Especializado em Confeitarias, Pastelarias e Padarias",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "postinstall": "npm run build --workspace=@koki/types --workspace=@koki/validation",
+    "dev:api": "npm run start:dev --workspace=@koki/api",
+    "dev:mobile": "npm run start --workspace=@koki/mobile",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present"
+  },
+  "keywords": [
+    "saas",
+    "bakery",
+    "confectionery",
+    "management",
+    "react-native",
+    "nestjs",
+    "mongodb"
+  ],
+  "author": "Koki Team",
+  "license": "UNLICENSED"
+}
