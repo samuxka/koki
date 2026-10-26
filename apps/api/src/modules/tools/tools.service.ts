@@ -1,12 +1,24 @@
 import { Injectable } from '@nestjs/common';
+import {
+  DetailedCostCalculationInput,
+  CostCalculationResult,
+} from '@koki/types';
 
 export interface CostCalculationInput {
+  productName?: string;
+  recipeId?: string;
   ingredientsCostCents: number;
   packagingCostCents?: number;
   laborCostCents?: number;
   overheadCostCents?: number;
-  method: 'margin' | 'markup'; // margem sobre venda vs markup sobre custo
-  targetPercentage: number; // ex: 35 (%)
+  wastePercentage?: number;
+  method: 'margin' | 'markup' | 'target_price';
+  targetPercentage?: number;
+  customPriceCents?: number;
+  yieldUnits?: number;
+  yieldUnitName?: string;
+  laborHours?: number;
+  laborHourlyRateCents?: number;
 }
 
 export interface UnitConversionInput {
@@ -28,51 +40,97 @@ export class ToolsService {
     geral: 1.0,
   };
 
-  calculateCost(input: CostCalculationInput) {
-    const ingredients = input.ingredientsCostCents || 0;
-    const packaging = input.packagingCostCents || 0;
-    const labor = input.laborCostCents || 0;
-    const overhead = input.overheadCostCents || 0;
+  calculateCost(input: CostCalculationInput): CostCalculationResult {
+    const ingredients = Math.max(0, input.ingredientsCostCents || 0);
+    const packaging = Math.max(0, input.packagingCostCents || 0);
 
-    const totalCostCents = ingredients + packaging + labor + overhead;
-    const rate = (input.targetPercentage || 0) / 100;
+    // Mão de obra calculada por horas ou valor fixo
+    let labor = Math.max(0, input.laborCostCents || 0);
+    if (input.laborHours && input.laborHourlyRateCents) {
+      labor = Math.round(input.laborHours * input.laborHourlyRateCents);
+    }
+
+    const overhead = Math.max(0, input.overheadCostCents || 0);
+    const subtotalCostsCents = ingredients + packaging + labor + overhead;
+
+    // Desperdício / Perda técnica de cozinha (5-10%)
+    const wastePercent = Math.max(0, input.wastePercentage || 0);
+    const wasteCents = Math.round(subtotalCostsCents * (wastePercent / 100));
+    const totalCostCents = subtotalCostsCents + wasteCents;
 
     let suggestedPriceCents = 0;
-    let profitCents = 0;
+    const rate = (input.targetPercentage || 40) / 100;
 
     if (input.method === 'margin') {
-      // Margem sobre preço de venda: Preço = Custo / (1 - Margem)
+      // Margem sobre venda: Preço = Custo / (1 - Margem)
       if (rate >= 1) {
         suggestedPriceCents = totalCostCents * 2;
       } else {
         suggestedPriceCents = Math.round(totalCostCents / (1 - rate));
       }
-    } else {
-      // Markup sobre o custo: Preço = Custo * (1 + Markup)
+    } else if (input.method === 'markup') {
+      // Markup sobre custo: Preço = Custo * (1 + Markup)
       suggestedPriceCents = Math.round(totalCostCents * (1 + rate));
+    } else if (input.method === 'target_price') {
+      // Preço fixado pelo usuário: calcula a margem resultante
+      suggestedPriceCents = Math.max(0, input.customPriceCents || totalCostCents);
+    } else {
+      suggestedPriceCents = Math.round(totalCostCents * 1.5);
     }
 
-    profitCents = Math.max(0, suggestedPriceCents - totalCostCents);
+    const profitCents = Math.max(0, suggestedPriceCents - totalCostCents);
+
     const effectiveMarginPercent =
       suggestedPriceCents > 0
         ? Math.round((profitCents / suggestedPriceCents) * 100)
         : 0;
+
     const effectiveMarkupPercent =
       totalCostCents > 0
         ? Math.round((profitCents / totalCostCents) * 100)
         : 0;
 
+    const yieldUnits = Math.max(1, input.yieldUnits || 1);
+    const yieldUnitName = input.yieldUnitName || 'unidade';
+
+    const costPerUnitCents = Math.round(totalCostCents / yieldUnits);
+    const pricePerUnitCents = Math.round(suggestedPriceCents / yieldUnits);
+    const profitPerUnitCents = Math.round(profitCents / yieldUnits);
+
+    const baseForPercentage = suggestedPriceCents > 0 ? suggestedPriceCents : totalCostCents || 1;
+
     return {
+      productName: input.productName,
+      ingredientsCostCents: ingredients,
+      packagingCostCents: packaging,
+      laborCostCents: labor,
+      overheadCostCents: overhead,
+      wasteCents,
+      subtotalCostsCents,
       totalCostCents,
       suggestedPriceCents,
       profitCents,
       effectiveMarginPercent,
       effectiveMarkupPercent,
+      yieldUnits,
+      yieldUnitName,
+      costPerUnitCents,
+      pricePerUnitCents,
+      profitPerUnitCents,
       costBreakdown: {
         ingredients,
         packaging,
         labor,
         overhead,
+        waste: wasteCents,
+      },
+      percentages: {
+        ingredients: Math.round((ingredients / baseForPercentage) * 100),
+        packaging: Math.round((packaging / baseForPercentage) * 100),
+        labor: Math.round((labor / baseForPercentage) * 100),
+        overhead: Math.round((overhead / baseForPercentage) * 100),
+        waste: Math.round((wasteCents / baseForPercentage) * 100),
+        profit: effectiveMarginPercent,
       },
     };
   }

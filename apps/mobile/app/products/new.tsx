@@ -12,7 +12,7 @@ import {
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as ImagePicker from 'expo-image-picker';
@@ -86,12 +86,20 @@ export default function NewProductScreen() {
   const queryClient = useQueryClient();
   const { company } = useAuthStore();
   const currency = company?.currency || 'EUR';
+  const params = useLocalSearchParams<{
+    prefillName?: string;
+    prefillPriceCents?: string;
+    prefillCostCents?: string;
+    prefillUnit?: string;
+  }>();
 
   // Basic Information
-  const [name, setName] = useState('');
+  const [name, setName] = useState(params.prefillName || '');
   const [category, setCategory] = useState('Bolos & Tortas');
-  const [unit, setUnit] = useState('unidade');
-  const [priceCents, setPriceCents] = useState(0);
+  const [unit, setUnit] = useState(params.prefillUnit || 'unidade');
+  const [priceCents, setPriceCents] = useState(
+    params.prefillPriceCents ? parseInt(params.prefillPriceCents, 10) || 0 : 0
+  );
   const [photoUrl, setPhotoUrl] = useState('');
   const [notes, setNotes] = useState('');
   const [isAvailable, setIsAvailable] = useState(true);
@@ -100,7 +108,9 @@ export default function NewProductScreen() {
   const [monthlySalesGoalUnits, setMonthlySalesGoalUnits] = useState('');
 
   // Cost & Ingredients (optional)
-  const [manualCostCents, setManualCostCents] = useState(0);
+  const [manualCostCents, setManualCostCents] = useState(
+    params.prefillCostCents ? parseInt(params.prefillCostCents, 10) || 0 : 0
+  );
   const [ingredients, setIngredients] = useState<IngredientItem[]>([]);
   const [ingredientNameInput, setIngredientNameInput] = useState('');
   const [ingredientCostInput, setIngredientCostInput] = useState(0);

@@ -860,6 +860,61 @@ export interface LabelQuotaResponse {
   tier: SubscriptionTier;
 }
 
+// Cost Calculator (Calculadora de Custos e Formação de Preço)
+export type PricingMethod = 'margin' | 'markup' | 'target_price';
+
+export interface DetailedCostCalculationInput {
+  productName?: string;
+  recipeId?: string;
+  ingredientsCostCents: number;
+  packagingCostCents?: number;
+  laborCostCents?: number;
+  overheadCostCents?: number;
+  wastePercentage?: number; // ex: 5 (%)
+  method: PricingMethod;
+  targetPercentage?: number; // ex: 40 (%)
+  customPriceCents?: number; // ex: 3500 (35.00 €)
+  yieldUnits?: number;       // ex: 12
+  yieldUnitName?: string;    // 'fatia', 'unidade', 'kg'
+  laborHours?: number;       // ex: 1.5
+  laborHourlyRateCents?: number; // ex: 1200 (12.00 €/h)
+}
+
+export interface CostCalculationResult {
+  productName?: string;
+  ingredientsCostCents: number;
+  packagingCostCents: number;
+  laborCostCents: number;
+  overheadCostCents: number;
+  wasteCents: number;
+  subtotalCostsCents: number;
+  totalCostCents: number;
+  suggestedPriceCents: number;
+  profitCents: number;
+  effectiveMarginPercent: number;
+  effectiveMarkupPercent: number;
+  yieldUnits: number;
+  yieldUnitName: string;
+  costPerUnitCents: number;
+  pricePerUnitCents: number;
+  profitPerUnitCents: number;
+  costBreakdown: {
+    ingredients: number;
+    packaging: number;
+    labor: number;
+    overhead: number;
+    waste: number;
+  };
+  percentages: {
+    ingredients: number;
+    packaging: number;
+    labor: number;
+    overhead: number;
+    waste: number;
+    profit: number;
+  };
+}
+
 // API Responses
 export interface ApiResponse<T> {
   success: boolean;

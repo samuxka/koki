@@ -261,9 +261,11 @@ export default function ToolsScreen() {
     }
 
     if (tool.id === 'cost_calculator') {
-      handleCalculateCost();
-      setActiveToolModal('cost_calculator');
-    } else if (tool.id === 'unit_converter') {
+      router.push('/cost-calculator' as any);
+      return;
+    }
+
+    if (tool.id === 'unit_converter') {
       handleCalculateConversion();
       setActiveToolModal('unit_converter');
     } else {
