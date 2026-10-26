@@ -7,6 +7,7 @@ import { Customer, CustomerDocument } from '../customers/schemas/customer.schema
 import { Product, ProductDocument } from '../products/schemas/product.schema';
 import { CashflowService } from '../cashflow/cashflow.service';
 import { CouponsService } from '../coupons/coupons.service';
+import { StripeService } from './stripe.service';
 import { CreateOrderInput, CreatePaymentInput, UpdateOrderStatusInput } from '@koki/validation';
 import { calculateOrderTotals } from '../../common/utils/currency.utils';
 
@@ -19,6 +20,7 @@ export class OrdersService {
     @InjectModel(Product.name) private productModel: Model<ProductDocument>,
     private cashflowService: CashflowService,
     @Optional() private couponsService?: CouponsService,
+    @Optional() private stripeService?: StripeService,
   ) {}
 
   async create(companyId: string | Types.ObjectId, input: CreateOrderInput, userId?: string): Promise<OrderDocument> {
@@ -250,6 +252,10 @@ export class OrdersService {
   }
 
   async findById(companyId: string | Types.ObjectId, id: string) {
+    if (this.stripeService) {
+      await this.stripeService.syncOrderPaymentStatus(companyId, id);
+    }
+
     const order = await this.orderModel.findOne({
       _id: new Types.ObjectId(id),
       companyId: new Types.ObjectId(companyId.toString()),

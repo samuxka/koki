@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Put, Patch, Delete, Body, Param, Query, Headers, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Body, Param, Query, Headers, Res, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
 import { StripeService } from './stripe.service';
@@ -132,5 +132,230 @@ export class OrdersController {
   @Post('stripe/webhook')
   async stripeWebhook(@Body() payload: any, @Headers('stripe-signature') signature?: string) {
     return this.stripeService.handleWebhook(payload, signature);
+  }
+
+  @Public()
+  @ApiOperation({ summary: 'Página de confirmação de pagamento Stripe' })
+  @Get('payment/success')
+  async paymentSuccess(
+    @Query('session_id') sessionId: string,
+    @Query('order_id') orderId: string,
+    @Res() res: any,
+  ) {
+    let orderNumber: number | string = '';
+    let customerName = '';
+    let amountFormatted = '';
+
+    if (sessionId) {
+      try {
+        const result = await this.stripeService.verifyAndConfirmSession(sessionId);
+        if (result) {
+          orderNumber = result.orderNumber;
+          customerName = result.customerName;
+          amountFormatted = (result.amountPaidCents / 100).toFixed(2) + ' €';
+        }
+      } catch (err: any) {
+        // proceed to display confirmation
+      }
+    }
+
+    const html = `<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pagamento Confirmado - Bris Pastelaria</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: #fff6e9;
+      color: #33220A;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .card {
+      background: #ffffff;
+      border-radius: 20px;
+      padding: 36px 24px;
+      max-width: 420px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 10px 30px rgba(102, 60, 0, 0.08);
+      border: 1px solid #e8d7c3;
+    }
+    .icon-circle {
+      width: 72px;
+      height: 72px;
+      background-color: #eafaf1;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+      color: #009933;
+      font-size: 38px;
+      line-height: 1;
+    }
+    .brand-name {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      color: #cc9a52;
+      text-transform: uppercase;
+      margin-bottom: 6px;
+    }
+    h1 {
+      font-size: 24px;
+      font-weight: 800;
+      color: #33220A;
+      margin-bottom: 10px;
+    }
+    .subtitle {
+      font-size: 14px;
+      color: #6b543e;
+      line-height: 1.5;
+      margin-bottom: 24px;
+    }
+    .order-box {
+      background: #fdfaf6;
+      border: 1px dashed #cc9a52;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 24px;
+      text-align: left;
+    }
+    .order-row {
+      display: flex;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      font-size: 13px;
+    }
+    .order-row:last-child {
+      margin-bottom: 0;
+      padding-top: 8px;
+      border-top: 1px solid #f0e0cc;
+      font-weight: 700;
+      color: #009933;
+      font-size: 15px;
+    }
+    .btn {
+      display: block;
+      background: #663c00;
+      color: #ffffff;
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 15px;
+      padding: 14px 20px;
+      border-radius: 12px;
+      transition: background 0.2s;
+    }
+    .btn:hover { background: #4d2d00; }
+    .footer-note {
+      font-size: 11px;
+      color: #9e8570;
+      margin-top: 18px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon-circle">✓</div>
+    <div class="brand-name">BRIS • PASTELARIA</div>
+    <h1>Pagamento Confirmado!</h1>
+    <p class="subtitle">
+      Recebemos o seu pagamento com sucesso via Stripe. A nossa equipa já foi notificada e está a preparar a sua encomenda com todo o carinho!
+    </p>
+
+    <div class="order-box">
+      ${orderNumber ? `<div class="order-row"><span>Número do Pedido:</span><b>#${orderNumber}</b></div>` : ''}
+      ${customerName ? `<div class="order-row"><span>Cliente:</span><b>${customerName}</b></div>` : ''}
+      <div class="order-row"><span>Status:</span><b style="color: #009933;">100% Pago</b></div>
+      ${amountFormatted ? `<div class="order-row"><span>Valor Pago:</span><b>${amountFormatted}</b></div>` : ''}
+    </div>
+
+    <a href="https://bris-website.vercel.app/" class="btn">
+      Voltar para a Loja Online
+    </a>
+
+    <div class="footer-note">
+      🔒 Processamento seguro via Stripe Payments & Tax
+    </div>
+  </div>
+</body>
+</html>`;
+
+    res.type('html').send(html);
+  }
+
+  @Public()
+  @ApiOperation({ summary: 'Página de cancelamento de pagamento Stripe' })
+  @Get('payment/cancel')
+  paymentCancel(@Query('order_id') orderId: string, @Res() res: any) {
+    const html = `<!DOCTYPE html>
+<html lang="pt">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pagamento Não Concluído - Bris Pastelaria</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #fff6e9;
+      color: #33220A;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 20px;
+    }
+    .card {
+      background: #ffffff;
+      border-radius: 20px;
+      padding: 36px 24px;
+      max-width: 420px;
+      width: 100%;
+      text-align: center;
+      border: 1px solid #e8d7c3;
+    }
+    .icon-circle {
+      width: 72px;
+      height: 72px;
+      background-color: #fbeae9;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 20px;
+      color: #c2312a;
+      font-size: 32px;
+    }
+    h1 { font-size: 22px; font-weight: 800; margin-bottom: 10px; }
+    p { font-size: 14px; color: #6b543e; line-height: 1.5; margin-bottom: 24px; }
+    .btn {
+      display: block;
+      background: #663c00;
+      color: #ffffff;
+      text-decoration: none;
+      font-weight: 700;
+      padding: 14px 20px;
+      border-radius: 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon-circle">✕</div>
+    <h1>Pagamento Cancelado</h1>
+    <p>O processo de pagamento foi cancelado. Se desejar, você pode solicitar um novo link de pagamento ou tentar novamente.</p>
+    <a href="https://bris-website.vercel.app/" class="btn">Voltar para a Loja</a>
+  </div>
+</body>
+</html>`;
+    res.type('html').send(html);
   }
 }

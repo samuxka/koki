@@ -98,8 +98,8 @@ export class StripeService {
           customer_email: customer?.email || undefined,
           tax_id_collection: { enabled: true },
           phone_number_collection: { enabled: true },
-          success_url: `https://checkout.stripe.com/success?order=${order.orderNumber}&session_id={CHECKOUT_SESSION_ID}`,
-          cancel_url: `https://checkout.stripe.com/cancel?order=${order.orderNumber}`,
+          success_url: this.getSuccessUrl(order.orderNumber, order._id.toString()),
+          cancel_url: this.getCancelUrl(order.orderNumber, order._id.toString()),
         };
 
         let session: Stripe.Checkout.Session;
@@ -266,5 +266,75 @@ export class StripeService {
     this.logger.log(
       `Pagamento Stripe de ${(amountPaidCents / 100).toFixed(2)} processado com sucesso para pedido #${order.orderNumber}`,
     );
+  }
+
+  private getSuccessUrl(orderNumber: number, orderId: string): string {
+    const backendUrl = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL;
+    if (backendUrl) {
+      return `${backendUrl.replace(/\/$/, '')}/api/v1/orders/payment/success?session_id={CHECKOUT_SESSION_ID}&order_id=${orderId}`;
+    }
+    return `https://bris-website.vercel.app/?payment_status=success&order=${orderNumber}&session_id={CHECKOUT_SESSION_ID}`;
+  }
+
+  private getCancelUrl(orderNumber: number, orderId: string): string {
+    const backendUrl = process.env.BACKEND_URL || process.env.RENDER_EXTERNAL_URL;
+    if (backendUrl) {
+      return `${backendUrl.replace(/\/$/, '')}/api/v1/orders/payment/cancel?order_id=${orderId}`;
+    }
+    return `https://bris-website.vercel.app/?payment_status=canceled&order=${orderNumber}`;
+  }
+
+  async verifyAndConfirmSession(sessionId: string) {
+    if (!this.stripeClient || sessionId.startsWith('cs_test_mock')) {
+      return null;
+    }
+
+    try {
+      const session = await this.stripeClient.checkout.sessions.retrieve(sessionId);
+      if (session.payment_status === 'paid') {
+        const orderId = session.metadata?.orderId;
+        const companyId = session.metadata?.companyId;
+
+        if (orderId && companyId) {
+          await this.confirmStripePayment(companyId, orderId, session);
+        }
+
+        return {
+          orderNumber: session.metadata?.orderNumber || '',
+          customerName: session.customer_details?.name || '',
+          amountPaidCents: session.amount_total || 0,
+        };
+      }
+    } catch (err: any) {
+      this.logger.error(`Erro ao verificar sessão Stripe ${sessionId}: ${err.message}`);
+    }
+
+    return null;
+  }
+
+  async syncOrderPaymentStatus(companyId: string | Types.ObjectId, orderId: string) {
+    const order = await this.orderModel.findOne({
+      _id: new Types.ObjectId(orderId),
+      companyId: new Types.ObjectId(companyId.toString()),
+      deletedAt: { $exists: false },
+    });
+
+    if (!order || order.financialStatus === 'paid' || !order.stripeSessionId) {
+      return order;
+    }
+
+    if (this.stripeClient && !order.stripeSessionId.startsWith('cs_test_mock')) {
+      try {
+        const session = await this.stripeClient.checkout.sessions.retrieve(order.stripeSessionId);
+        if (session.payment_status === 'paid') {
+          await this.confirmStripePayment(companyId.toString(), orderId.toString(), session);
+          return this.orderModel.findById(order._id);
+        }
+      } catch (err: any) {
+        this.logger.warn(`Erro ao verificar sessão Stripe ${order.stripeSessionId}: ${err.message}`);
+      }
+    }
+
+    return order;
   }
 }
