@@ -8,6 +8,7 @@ import {
   TextInput,
   Alert,
   Modal,
+  ActivityIndicator,
 } from 'react-native';
 import { useRouter } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -78,19 +79,27 @@ export default function NewComboScreen() {
   const [productSearch, setProductSearch] = useState('');
 
   // Fetch Available Products
-  const { data: productsData } = useQuery<{ items: Product[] } | Product[]>({
+  const { data: productsData, isLoading: isLoadingProducts } = useQuery<{ items: Product[] } | Product[]>({
     queryKey: ['products-list-mini'],
-    queryFn: () => api.get('/products?availableOnly=true'),
+    queryFn: () => api.get('/products'),
   });
 
-  const availableProducts: Product[] = Array.isArray(productsData)
-    ? productsData
-    : (productsData as any)?.items || [];
+  const availableProducts: Product[] = useMemo(() => {
+    const raw: Product[] = Array.isArray(productsData)
+      ? productsData
+      : (productsData as any)?.items || [];
+    // Only physical products (exclude combos)
+    return raw.filter((p) => !p.isCombo);
+  }, [productsData]);
 
   const filteredProducts = useMemo(() => {
     if (!productSearch.trim()) return availableProducts;
-    const term = productSearch.toLowerCase();
-    return availableProducts.filter((p) => p.name.toLowerCase().includes(term));
+    const term = productSearch.toLowerCase().trim();
+    return availableProducts.filter(
+      (p) =>
+        p.name.toLowerCase().includes(term) ||
+        (p.category && p.category.toLowerCase().includes(term)),
+    );
   }, [availableProducts, productSearch]);
 
   // Calculations
@@ -488,12 +497,38 @@ export default function NewComboScreen() {
       </ScrollView>
 
       {/* Product Selection Modal */}
-      <Modal visible={isPickerOpen} transparent animationType="slide">
-        <View style={styles.modalOverlay}>
-          <View style={[styles.modalContent, { maxHeight: '80%' }]}>
+      <Modal
+        visible={isPickerOpen}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setIsPickerOpen(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setIsPickerOpen(false)}
+        >
+          <TouchableOpacity
+            activeOpacity={1}
+            style={[
+              styles.modalContent,
+              { paddingBottom: Math.max(insets.bottom, 16) + 16 },
+            ]}
+            onPress={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
             <View style={styles.modalHeader}>
-              <Text style={styles.modalTitle}>Adicionar ao Combo</Text>
-              <TouchableOpacity onPress={() => setIsPickerOpen(false)}>
+              <View>
+                <Text style={styles.modalTitle}>Adicionar ao Combo</Text>
+                <Text style={styles.modalSubtitle}>
+                  {availableProducts.length} produto{availableProducts.length === 1 ? '' : 's'} no catálogo
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={styles.modalCloseBtn}
+                onPress={() => setIsPickerOpen(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
                 <X size={20} color={colors.textSecondary} />
               </TouchableOpacity>
             </View>
@@ -503,38 +538,123 @@ export default function NewComboScreen() {
               <Search size={16} color={colors.textSecondary} style={{ marginRight: 8 }} />
               <TextInput
                 style={styles.modalSearchInput}
-                placeholder="Buscar produto..."
+                placeholder="Buscar produto por nome ou categoria..."
                 placeholderTextColor={colors.textMuted}
                 value={productSearch}
                 onChangeText={setProductSearch}
+                autoCapitalize="none"
               />
+              {productSearch.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => setProductSearch('')}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <X size={16} color={colors.textMuted} />
+                </TouchableOpacity>
+              )}
             </View>
 
-            <ScrollView style={{ flex: 1 }} showsVerticalScrollIndicator={false}>
-              {filteredProducts.map((p) => (
-                <TouchableOpacity
-                  key={p.id}
-                  style={styles.productPickerItem}
-                  onPress={() => handleSelectProduct(p)}
-                  activeOpacity={0.7}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.pickerItemName}>{p.name}</Text>
-                    <Text style={styles.pickerItemCategory}>{p.category}</Text>
-                  </View>
-                  <View style={{ alignItems: 'flex-end' }}>
-                    <Text style={styles.pickerItemPrice}>
-                      {formatCurrency(p.priceCents || 0, currency)}
-                    </Text>
-                    <Text style={styles.pickerItemCost}>
-                      Custo: {formatCurrency(p.costCents || 0, currency)}
-                    </Text>
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-          </View>
-        </View>
+            {/* Body: Loading / Empty / List */}
+            {isLoadingProducts ? (
+              <View style={styles.modalCenterBox}>
+                <ActivityIndicator size="small" color={colors.primary} />
+                <Text style={styles.modalLoadingText}>Carregando produtos...</Text>
+              </View>
+            ) : filteredProducts.length === 0 ? (
+              <View style={styles.modalEmptyBox}>
+                <ShoppingBag size={40} color={colors.border} style={{ marginBottom: 10 }} />
+                <Text style={styles.modalEmptyTitle}>
+                  {productSearch.trim() ? 'Nenhum produto encontrado' : 'Nenhum produto cadastrado'}
+                </Text>
+                <Text style={styles.modalEmptySubtitle}>
+                  {productSearch.trim()
+                    ? `Não encontramos itens com "${productSearch}".`
+                    : 'Cadastre bolos, doces ou outros itens no seu catálogo para incluí-los nos combos.'}
+                </Text>
+                {!productSearch.trim() && (
+                  <TouchableOpacity
+                    style={styles.modalAddProductBtn}
+                    onPress={() => {
+                      setIsPickerOpen(false);
+                      router.push('/products/new' as any);
+                    }}
+                  >
+                    <Plus size={16} color="#ffffff" style={{ marginRight: 6 }} />
+                    <Text style={styles.modalAddProductBtnText}>Cadastrar Novo Produto</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : (
+              <ScrollView
+                style={styles.modalScroll}
+                contentContainerStyle={styles.modalScrollContent}
+                keyboardShouldPersistTaps="handled"
+                showsVerticalScrollIndicator={false}
+              >
+                {filteredProducts.map((p) => {
+                  const alreadySelected = items.some((item) => item.productId === p.id);
+                  const currentQty = items.find((item) => item.productId === p.id)?.quantity || 0;
+
+                  return (
+                    <TouchableOpacity
+                      key={p.id}
+                      style={[
+                        styles.productPickerItem,
+                        alreadySelected && styles.productPickerItemSelected,
+                      ]}
+                      onPress={() => handleSelectProduct(p)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.pickerItemLeft}>
+                        <View
+                          style={[
+                            styles.pickerItemIconBox,
+                            alreadySelected && styles.pickerItemIconBoxActive,
+                          ]}
+                        >
+                          <ShoppingBag
+                            size={18}
+                            color={alreadySelected ? colors.primary : colors.textMuted}
+                          />
+                        </View>
+                        <View style={{ flex: 1, marginRight: spacing.sm }}>
+                          <Text style={styles.pickerItemName} numberOfLines={1}>
+                            {p.name}
+                          </Text>
+                          <Text style={styles.pickerItemCategory}>
+                            {p.category} {p.unit ? `• Por ${p.unit}` : ''}
+                          </Text>
+                          {p.costCents > 0 && (
+                            <Text style={styles.pickerItemCost}>
+                              Custo: {formatCurrency(p.costCents, currency)}
+                            </Text>
+                          )}
+                        </View>
+                      </View>
+
+                      <View style={{ alignItems: 'flex-end' }}>
+                        <Text style={styles.pickerItemPrice}>
+                          {formatCurrency(p.priceCents || 0, currency)}
+                        </Text>
+                        {alreadySelected ? (
+                          <View style={styles.pickerItemBadge}>
+                            <Check size={12} color="#ffffff" style={{ marginRight: 3 }} />
+                            <Text style={styles.pickerItemBadgeText}>{currentQty}x no combo</Text>
+                          </View>
+                        ) : (
+                          <View style={styles.pickerItemAddBtn}>
+                            <Plus size={12} color={colors.primary} style={{ marginRight: 2 }} />
+                            <Text style={styles.pickerItemAddBtnText}>Adicionar</Text>
+                          </View>
+                        )}
+                      </View>
+                    </TouchableOpacity>
+                  );
+                })}
+              </ScrollView>
+            )}
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
     </View>
   );
@@ -833,7 +953,10 @@ const styles = StyleSheet.create({
     backgroundColor: colors.cardBackground,
     borderTopLeftRadius: borderRadius.xl,
     borderTopRightRadius: borderRadius.xl,
-    padding: spacing.lg,
+    paddingTop: spacing.lg,
+    paddingHorizontal: spacing.lg,
+    height: '75%',
+    maxHeight: '85%',
   },
   modalHeader: {
     flexDirection: 'row',
@@ -846,29 +969,115 @@ const styles = StyleSheet.create({
     fontWeight: typography.weights.bold,
     color: colors.primaryDark,
   },
+  modalSubtitle: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  modalCloseBtn: {
+    width: 32,
+    height: 32,
+    borderRadius: 16,
+    backgroundColor: colors.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
   modalSearchBox: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: colors.background,
     borderRadius: borderRadius.md,
     paddingHorizontal: spacing.md,
-    height: 40,
+    height: 42,
     borderWidth: 1,
     borderColor: colors.border,
-    marginBottom: spacing.md,
+    marginBottom: spacing.sm,
   },
   modalSearchInput: {
     flex: 1,
     fontSize: typography.sizes.sm,
     color: colors.text,
   },
+  modalScroll: {
+    flex: 1,
+  },
+  modalScrollContent: {
+    paddingBottom: spacing.lg,
+  },
+  modalCenterBox: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.xl,
+  },
+  modalLoadingText: {
+    fontSize: typography.sizes.sm,
+    color: colors.textSecondary,
+    marginTop: spacing.sm,
+  },
+  modalEmptyBox: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: spacing.xl,
+  },
+  modalEmptyTitle: {
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
+    color: colors.primaryDark,
+    marginBottom: 4,
+    textAlign: 'center',
+  },
+  modalEmptySubtitle: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+    textAlign: 'center',
+    marginBottom: spacing.lg,
+    lineHeight: 18,
+  },
+  modalAddProductBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+  },
+  modalAddProductBtnText: {
+    color: '#ffffff',
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.semibold,
+  },
   productPickerItem: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xs,
     borderBottomWidth: 1,
     borderBottomColor: colors.border,
+  },
+  productPickerItemSelected: {
+    backgroundColor: colors.background,
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.sm,
+  },
+  pickerItemLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  pickerItemIconBox: {
+    width: 38,
+    height: 38,
+    borderRadius: borderRadius.md,
+    backgroundColor: colors.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: spacing.sm,
+  },
+  pickerItemIconBoxActive: {
+    backgroundColor: colors.surface,
   },
   pickerItemName: {
     fontSize: typography.sizes.sm,
@@ -880,13 +1089,41 @@ const styles = StyleSheet.create({
     color: colors.textSecondary,
     marginTop: 1,
   },
+  pickerItemCost: {
+    fontSize: 10,
+    color: colors.textMuted,
+    marginTop: 1,
+  },
   pickerItemPrice: {
     fontSize: typography.sizes.sm,
     fontWeight: typography.weights.bold,
     color: colors.primary,
+    marginBottom: 4,
   },
-  pickerItemCost: {
+  pickerItemBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: borderRadius.full,
+  },
+  pickerItemBadgeText: {
     fontSize: 10,
-    color: colors.textMuted,
+    color: '#ffffff',
+    fontWeight: typography.weights.bold,
+  },
+  pickerItemAddBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: borderRadius.full,
+  },
+  pickerItemAddBtnText: {
+    fontSize: 11,
+    color: colors.primaryDark,
+    fontWeight: typography.weights.semibold,
   },
 });
