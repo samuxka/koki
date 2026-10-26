@@ -294,6 +294,8 @@ export class OrdersService {
         deliveryDate: order.deliveryDate.toISOString(),
         deliveryMethod: order.deliveryMethod,
         notes: order.notes,
+        stripePaymentLinkUrl: order.stripePaymentLinkUrl,
+        stripeSessionId: order.stripeSessionId,
         createdAt: (order as any).createdAt,
       },
       payments: payments.map((p) => ({

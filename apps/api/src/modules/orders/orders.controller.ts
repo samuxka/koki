@@ -1,8 +1,10 @@
-import { Controller, Get, Post, Put, Patch, Delete, Body, Param, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Post, Put, Patch, Delete, Body, Param, Query, Headers, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { OrdersService } from './orders.service';
+import { StripeService } from './stripe.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { TenantGuard } from '../../common/guards/tenant.guard';
+import { Public } from '../../common/decorators/public.decorator';
 import { CurrentCompany } from '../../common/decorators/current-company.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import { CreateOrderInput, CreatePaymentInput, UpdateOrderStatusInput } from '@koki/validation';
@@ -12,7 +14,10 @@ import { CreateOrderInput, CreatePaymentInput, UpdateOrderStatusInput } from '@k
 @UseGuards(JwtAuthGuard, TenantGuard)
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(
+    private readonly ordersService: OrdersService,
+    private readonly stripeService: StripeService,
+  ) {}
 
   @ApiOperation({ summary: 'Listar pedidos com filtros combináveis e paginação' })
   @Get()
@@ -114,5 +119,18 @@ export class OrdersController {
   async cancel(@CurrentCompany() company: any, @Param('id') id: string) {
     await this.ordersService.cancel(company._id, id);
     return { success: true, message: 'Pedido cancelado com sucesso' };
+  }
+
+  @ApiOperation({ summary: 'Gerar link de pagamento seguro da Stripe para o pedido' })
+  @Post(':id/payment-link')
+  async generatePaymentLink(@CurrentCompany() company: any, @Param('id') id: string) {
+    return this.stripeService.generatePaymentLink(company._id, id);
+  }
+
+  @Public()
+  @ApiOperation({ summary: 'Webhook de pagamentos da Stripe' })
+  @Post('stripe/webhook')
+  async stripeWebhook(@Body() payload: any, @Headers('stripe-signature') signature?: string) {
+    return this.stripeService.handleWebhook(payload, signature);
   }
 }

@@ -8,6 +8,8 @@ import {
   Modal,
   Alert,
   Image,
+  Share,
+  Linking,
 } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -22,7 +24,7 @@ import { api } from '../../src/services/api';
 import { useAuthStore } from '../../src/stores/auth.store';
 import { usePreferencesStore } from '../../src/stores/preferences.store';
 import { formatCurrency, formatDateTime } from '../../src/utils/formatters';
-import { Order, Payment, CashAccount, OperationalStatus } from '@koki/types';
+import { Order, Payment, CashAccount, OperationalStatus, GeneratePaymentLinkResponse } from '@koki/types';
 import {
   User,
   Calendar,
@@ -40,6 +42,10 @@ import {
   Eye,
   Trash2,
   Check,
+  Share2,
+  Send,
+  ExternalLink,
+  ShieldCheck,
 } from 'lucide-react-native';
 
 const nextOperationalStatus: Record<string, OperationalStatus> = {
@@ -68,6 +74,10 @@ export default function OrderDetailsScreen() {
   const [paymentMethod, setPaymentMethod] = useState<'cash' | 'bank_transfer'>('cash');
   const [receiptUri, setReceiptUri] = useState<string>('');
   const [selectedReceiptViewUrl, setSelectedReceiptViewUrl] = useState<string | null>(null);
+
+  // Stripe Payment Link State
+  const [paymentLinkModalVisible, setPaymentLinkModalVisible] = useState(false);
+  const [activePaymentLink, setActivePaymentLink] = useState<string>('');
 
   // Query order details
   const { data, isLoading, refetch } = useQuery<{ order: Order; payments: Payment[] }>({
@@ -126,6 +136,57 @@ export default function OrderDetailsScreen() {
       Alert.alert('Erro ao registrar pagamento', err.message);
     },
   });
+
+  // Generate Payment Link Mutation (Stripe)
+  const generatePaymentLinkMutation = useMutation({
+    mutationFn: () =>
+      api.post<GeneratePaymentLinkResponse>(`/orders/${id}/payment-link`),
+    onSuccess: (res) => {
+      setActivePaymentLink(res.paymentUrl);
+      setPaymentLinkModalVisible(true);
+      queryClient.invalidateQueries({ queryKey: ['order-detail', id] });
+    },
+    onError: (err: any) => {
+      Alert.alert(
+        'Erro ao gerar link de pagamento',
+        err.message || 'Falha ao conectar com o serviço da Stripe.',
+      );
+    },
+  });
+
+  const handleSharePaymentLink = async (url: string) => {
+    if (!data?.order) return;
+    const currentOrder = data.order;
+    const message = `Olá, ${currentOrder.customerName}! 🍰\nSegue o link seguro para pagamento do Pedido #${currentOrder.orderNumber} no valor de ${formatCurrency(currentOrder.remainingAmountCents, currency)}:\n\n👉 ${url}\n\nPagamento com Cartão, Apple Pay ou Google Pay via Stripe. Muito obrigado!`;
+    try {
+      await Share.share({
+        message,
+        url,
+        title: `Link de Pagamento - Pedido #${currentOrder.orderNumber}`,
+      });
+    } catch (err: any) {
+      Alert.alert('Erro ao compartilhar', err.message);
+    }
+  };
+
+  const handleSendWhatsApp = (url: string) => {
+    if (!data?.order) return;
+    const currentOrder = data.order;
+    const cleanPhone = (currentOrder.customerPhone || '').replace(/\D/g, '');
+    const message = encodeURIComponent(
+      `Olá, ${currentOrder.customerName}! 🍰\nSegue o link seguro para pagamento do seu Pedido #${currentOrder.orderNumber} no valor de ${formatCurrency(currentOrder.remainingAmountCents, currency)}:\n\n👉 ${url}\n\nVocê pode pagar com Cartão de Crédito/Débito, Apple Pay ou Google Pay processado com segurança pela Stripe. Muito obrigado!`,
+    );
+
+    if (cleanPhone) {
+      Linking.openURL(`whatsapp://send?phone=${cleanPhone}&text=${message}`).catch(() => {
+        Linking.openURL(`https://wa.me/${cleanPhone}?text=${message}`).catch(() => {
+          handleSharePaymentLink(url);
+        });
+      });
+    } else {
+      handleSharePaymentLink(url);
+    }
+  };
 
   const handlePickReceiptFromGallery = async () => {
     try {
@@ -315,17 +376,82 @@ export default function OrderDetailsScreen() {
           </View>
 
           {order.remainingAmountCents > 0 ? (
-            <Button
-              title="Registrar Pagamento"
-              icon={<DollarSign size={18} color="#ffffff" />}
-              onPress={() => {
-                setPaymentAmountCents(order.remainingAmountCents);
-                setPaymentMethod('cash');
-                setReceiptUri('');
-                setPaymentModalVisible(true);
-              }}
-              style={styles.payBtn}
-            />
+            <View style={{ gap: spacing.sm, marginTop: spacing.sm }}>
+              {/* Botão Principal: Gerar Link de Pagamento (Stripe) */}
+              {order.stripePaymentLinkUrl ? (
+                <View style={styles.activeLinkCard}>
+                  <View style={styles.activeLinkHeader}>
+                    <View style={styles.activeLinkHeaderLeft}>
+                      <CreditCard size={16} color={colors.primary} />
+                      <Text style={styles.activeLinkTitle}>Link Stripe Disponível</Text>
+                    </View>
+                    <View style={styles.secureBadge}>
+                      <ShieldCheck size={12} color={colors.success} />
+                      <Text style={styles.secureBadgeText}>Seguro</Text>
+                    </View>
+                  </View>
+
+                  <Text style={styles.activeLinkUrl} numberOfLines={1}>
+                    {order.stripePaymentLinkUrl}
+                  </Text>
+
+                  <View style={styles.activeLinkButtonsRow}>
+                    <TouchableOpacity
+                      style={styles.activeLinkShareBtn}
+                      activeOpacity={0.8}
+                      onPress={() => {
+                        setActivePaymentLink(order.stripePaymentLinkUrl!);
+                        setPaymentLinkModalVisible(true);
+                      }}
+                    >
+                      <Share2 size={14} color="#ffffff" style={{ marginRight: 6 }} />
+                      <Text style={styles.activeLinkShareBtnText}>Ver & Compartilhar</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity
+                      style={styles.activeLinkWhatsAppBtn}
+                      activeOpacity={0.8}
+                      onPress={() => handleSendWhatsApp(order.stripePaymentLinkUrl!)}
+                    >
+                      <Send size={14} color="#00793b" style={{ marginRight: 4 }} />
+                      <Text style={styles.activeLinkWhatsAppBtnText}>WhatsApp</Text>
+                    </TouchableOpacity>
+                  </View>
+
+                  <TouchableOpacity
+                    style={styles.regenerateLinkBtn}
+                    onPress={() => generatePaymentLinkMutation.mutate()}
+                    disabled={generatePaymentLinkMutation.isPending}
+                  >
+                    <Text style={styles.regenerateLinkText}>
+                      {generatePaymentLinkMutation.isPending ? 'Atualizando...' : '↻ Gerar novo link com saldo atual'}
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+              ) : (
+                <Button
+                  title="Gerar Link de Pagamento"
+                  icon={<CreditCard size={18} color="#ffffff" />}
+                  loading={generatePaymentLinkMutation.isPending}
+                  onPress={() => generatePaymentLinkMutation.mutate()}
+                  style={styles.stripeBtn}
+                />
+              )}
+
+              {/* Botão Secundário: Registrar Pagamento Manual */}
+              <Button
+                title="Registrar Pagamento Manual"
+                variant="secondary"
+                icon={<DollarSign size={18} color={colors.primary} />}
+                onPress={() => {
+                  setPaymentAmountCents(order.remainingAmountCents);
+                  setPaymentMethod('cash');
+                  setReceiptUri('');
+                  setPaymentModalVisible(true);
+                }}
+                style={styles.payBtn}
+              />
+            </View>
           ) : (
             <View style={styles.fullyPaidBanner}>
               <CheckCircle size={18} color={colors.success} />
@@ -601,6 +727,100 @@ export default function OrderDetailsScreen() {
             </View>
           )}
         </View>
+      </Modal>
+
+      {/* Modal - Link de Pagamento Stripe */}
+      <Modal
+        visible={paymentLinkModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setPaymentLinkModalVisible(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setPaymentLinkModalVisible(false)}
+        >
+          <TouchableOpacity
+            style={styles.linkModalContent}
+            activeOpacity={1}
+            onPress={(e) => e.stopPropagation()}
+          >
+            <View style={styles.modalHeader}>
+              <View style={styles.linkHeaderRow}>
+                <View style={styles.stripeIconCircle}>
+                  <CreditCard size={20} color={colors.primary} />
+                </View>
+                <View>
+                  <Text style={styles.modalTitle}>Link de Pagamento Stripe</Text>
+                  <Text style={styles.linkModalSubtitle}>
+                    Pedido #{order.orderNumber} • {order.customerName}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                onPress={() => setPaymentLinkModalVisible(false)}
+                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              >
+                <X size={20} color={colors.textSecondary} />
+              </TouchableOpacity>
+            </View>
+
+            {/* Banner de Valor a Pagar */}
+            <View style={styles.linkAmountBanner}>
+              <Text style={styles.linkAmountLabel}>Saldo a Pagar:</Text>
+              <Text style={styles.linkAmountValue}>
+                {formatCurrency(order.remainingAmountCents, currency, hideValues)}
+              </Text>
+            </View>
+
+            {/* Caixa da URL */}
+            <Text style={styles.urlBoxLabel}>Link Gerado:</Text>
+            <View style={styles.urlBox}>
+              <Text style={styles.urlBoxText} numberOfLines={2} selectable>
+                {activePaymentLink}
+              </Text>
+            </View>
+
+            {/* Ações */}
+            <View style={styles.linkActionsContainer}>
+              <TouchableOpacity
+                style={styles.whatsappMainBtn}
+                activeOpacity={0.8}
+                onPress={() => handleSendWhatsApp(activePaymentLink)}
+              >
+                <Send size={18} color="#ffffff" style={{ marginRight: 8 }} />
+                <Text style={styles.whatsappMainBtnText}>Enviar por WhatsApp</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.shareSecondaryBtn}
+                activeOpacity={0.8}
+                onPress={() => handleSharePaymentLink(activePaymentLink)}
+              >
+                <Share2 size={16} color={colors.primary} style={{ marginRight: 8 }} />
+                <Text style={styles.shareSecondaryBtnText}>Outras Opções de Envio</Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={styles.openBrowserBtn}
+                activeOpacity={0.8}
+                onPress={() => Linking.openURL(activePaymentLink)}
+              >
+                <ExternalLink size={15} color={colors.textSecondary} style={{ marginRight: 6 }} />
+                <Text style={styles.openBrowserBtnText}>Abrir Página de Pagamento</Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Rodapé informativo */}
+            <View style={styles.stripeBadgeFooter}>
+              <ShieldCheck size={15} color={colors.success} style={{ marginRight: 6 }} />
+              <Text style={styles.stripeBadgeFooterText}>
+                Processado com segurança via Stripe (Cartão, Apple Pay e Google Pay).
+              </Text>
+            </View>
+          </TouchableOpacity>
+        </TouchableOpacity>
       </Modal>
     </View>
   );
@@ -1062,5 +1282,220 @@ const styles = StyleSheet.create({
   imageViewerImage: {
     width: '100%',
     height: '100%',
+  },
+  stripeBtn: {
+    backgroundColor: colors.primary,
+  },
+  activeLinkCard: {
+    backgroundColor: colors.background,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    padding: spacing.md,
+    marginBottom: spacing.xs,
+  },
+  activeLinkHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 6,
+  },
+  activeLinkHeaderLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  activeLinkTitle: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
+    color: colors.primaryDark,
+  },
+  secureBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#e6f7ec',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: borderRadius.full,
+    gap: 3,
+  },
+  secureBadgeText: {
+    fontSize: 10,
+    fontWeight: typography.weights.bold,
+    color: colors.success,
+  },
+  activeLinkUrl: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    backgroundColor: colors.cardBackground,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: spacing.sm,
+  },
+  activeLinkButtonsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  activeLinkShareBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.primary,
+    paddingVertical: 8,
+    borderRadius: borderRadius.md,
+  },
+  activeLinkShareBtnText: {
+    color: '#ffffff',
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
+  },
+  activeLinkWhatsAppBtn: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#eafaf1',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 8,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: '#c3ecd2',
+  },
+  activeLinkWhatsAppBtnText: {
+    color: '#00793b',
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
+  },
+  regenerateLinkBtn: {
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  regenerateLinkText: {
+    fontSize: 11,
+    color: colors.textMuted,
+    textDecorationLine: 'underline',
+  },
+  linkModalContent: {
+    backgroundColor: colors.cardBackground,
+    borderTopLeftRadius: borderRadius.xl,
+    borderTopRightRadius: borderRadius.xl,
+    padding: spacing.lg,
+    paddingBottom: 32,
+  },
+  linkHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  stripeIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    backgroundColor: colors.background,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  linkModalSubtitle: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+    marginTop: 2,
+  },
+  linkAmountBanner: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+    marginVertical: spacing.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  linkAmountLabel: {
+    fontSize: typography.sizes.sm,
+    color: colors.textSecondary,
+    fontWeight: typography.weights.medium,
+  },
+  linkAmountValue: {
+    fontSize: typography.sizes.md,
+    fontWeight: typography.weights.bold,
+    color: colors.danger,
+  },
+  urlBoxLabel: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+    marginBottom: 4,
+  },
+  urlBox: {
+    backgroundColor: colors.surface,
+    padding: spacing.sm,
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    marginBottom: spacing.md,
+  },
+  urlBoxText: {
+    fontSize: 11,
+    color: colors.primaryDark,
+    lineHeight: 16,
+  },
+  linkActionsContainer: {
+    gap: spacing.sm,
+  },
+  whatsappMainBtn: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#25D366',
+    paddingVertical: 12,
+    borderRadius: borderRadius.md,
+  },
+  whatsappMainBtnText: {
+    color: '#ffffff',
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+  },
+  shareSecondaryBtn: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: colors.background,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingVertical: 10,
+    borderRadius: borderRadius.md,
+  },
+  shareSecondaryBtnText: {
+    color: colors.primary,
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.semibold,
+  },
+  openBrowserBtn: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 8,
+  },
+  openBrowserBtnText: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+  },
+  stripeBadgeFooter: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    paddingVertical: 8,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.sm,
+    marginTop: spacing.md,
+  },
+  stripeBadgeFooterText: {
+    fontSize: 11,
+    color: colors.textSecondary,
   },
 });

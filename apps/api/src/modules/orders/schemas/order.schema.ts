@@ -103,6 +103,12 @@ export class Order {
   @Prop()
   notes?: string;
 
+  @Prop()
+  stripePaymentLinkUrl?: string;
+
+  @Prop()
+  stripeSessionId?: string;
+
   @Prop({ type: Types.ObjectId, ref: 'User' })
   createdBy: Types.ObjectId;
 

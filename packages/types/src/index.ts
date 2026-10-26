@@ -264,14 +264,28 @@ export interface Order {
   deliveryDate: string;
   deliveryMethod: DeliveryMethod;
   notes?: string;
+  stripePaymentLinkUrl?: string;
+  stripeSessionId?: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface GeneratePaymentLinkResponse {
+  paymentUrl: string;
+  sessionId?: string;
+  orderId: string;
+  orderNumber: number;
+  remainingAmountCents: number;
+  currency: string;
+  customerName: string;
+  customerPhone?: string;
 }
 
 // Payment
 export type PaymentMethod =
   | 'cash'
   | 'card'
+  | 'stripe'
   | 'mbway'
   | 'pix'
   | 'bank_transfer'

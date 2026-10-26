@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { OrdersService } from './orders.service';
+import { StripeService } from './stripe.service';
 import { OrdersController } from './orders.controller';
 import { Order, OrderSchema } from './schemas/order.schema';
 import { Payment, PaymentSchema } from './schemas/payment.schema';
@@ -23,7 +24,7 @@ import { CouponsModule } from '../coupons/coupons.module';
     CouponsModule,
   ],
   controllers: [OrdersController],
-  providers: [OrdersService],
-  exports: [OrdersService, MongooseModule],
+  providers: [OrdersService, StripeService],
+  exports: [OrdersService, StripeService, MongooseModule],
 })
 export class OrdersModule {}

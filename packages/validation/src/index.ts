@@ -130,7 +130,7 @@ export const createOrderSchema = z.object({
     .object({
       cashAccountId: z.string().min(1, 'Selecione a caixinha de destino'),
       amountCents: z.number().positive('O valor pago deve ser maior que zero'),
-      paymentMethod: z.enum(['cash', 'card', 'mbway', 'pix', 'bank_transfer', 'other']),
+      paymentMethod: z.enum(['cash', 'card', 'stripe', 'mbway', 'pix', 'bank_transfer', 'other']),
     })
     .optional(),
 });
@@ -148,7 +148,7 @@ export type UpdateOrderStatusInput = z.infer<typeof updateOrderStatusSchema>;
 export const createPaymentSchema = z.object({
   cashAccountId: z.string().min(1, 'Selecione a caixinha de destino'),
   amountCents: z.number().positive('O valor deve ser maior que zero'),
-  paymentMethod: z.enum(['cash', 'card', 'mbway', 'pix', 'bank_transfer', 'other']),
+  paymentMethod: z.enum(['cash', 'card', 'stripe', 'mbway', 'pix', 'bank_transfer', 'other']),
   receiptUrl: z.string().optional(),
   idempotencyKey: z.string().optional(),
 });
