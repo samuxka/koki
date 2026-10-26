@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import Stripe from 'stripe';
 import { Order, OrderDocument } from './schemas/order.schema';
+import { Customer, CustomerDocument } from '../customers/schemas/customer.schema';
 import { Company, CompanyDocument } from '../companies/schemas/company.schema';
 import { CashAccount, CashAccountDocument } from '../cashflow/schemas/cash-account.schema';
 import { Payment, PaymentDocument } from './schemas/payment.schema';
@@ -15,6 +16,7 @@ export class StripeService {
 
   constructor(
     @InjectModel(Order.name) private orderModel: Model<OrderDocument>,
+    @InjectModel(Customer.name) private customerModel: Model<CustomerDocument>,
     @InjectModel(Company.name) private companyModel: Model<CompanyDocument>,
     @InjectModel(Payment.name) private paymentModel: Model<PaymentDocument>,
     @InjectModel(CashAccount.name) private cashAccountModel: Model<CashAccountDocument>,
@@ -60,13 +62,19 @@ export class StripeService {
       throw new BadRequestException('Este pedido já está totalmente quitado.');
     }
 
+    const customer = await this.customerModel.findById(order.customerId);
     const currency = (company.currency || 'EUR').toLowerCase();
     const amountCents = order.remainingAmountCents;
 
     // Check if there is an active Stripe client
     if (this.stripeClient) {
       try {
-        const session = await this.stripeClient.checkout.sessions.create({
+        const lineItemDescription =
+          order.items && order.items.length > 0
+            ? `Itens: ${order.items.map((i) => `${i.quantity}x ${i.productName}`).join(', ').slice(0, 200)}`
+            : `Pagamento do pedido #${order.orderNumber}. Cliente: ${order.customerName}`;
+
+        const baseSessionParams: Stripe.Checkout.SessionCreateParams = {
           mode: 'payment',
           line_items: [
             {
@@ -74,7 +82,7 @@ export class StripeService {
                 currency,
                 product_data: {
                   name: `Pedido #${order.orderNumber} - ${company.tradeName}`,
-                  description: `Pagamento do pedido #${order.orderNumber}. Cliente: ${order.customerName}`,
+                  description: lineItemDescription,
                 },
                 unit_amount: amountCents,
               },
@@ -87,9 +95,24 @@ export class StripeService {
             companyId: company._id.toString(),
           },
           client_reference_id: order._id.toString(),
+          customer_email: customer?.email || undefined,
+          tax_id_collection: { enabled: true },
+          phone_number_collection: { enabled: true },
           success_url: `https://checkout.stripe.com/success?order=${order.orderNumber}&session_id={CHECKOUT_SESSION_ID}`,
           cancel_url: `https://checkout.stripe.com/cancel?order=${order.orderNumber}`,
-        });
+        };
+
+        let session: Stripe.Checkout.Session;
+        try {
+          // Stripe Tax automatically calculates IVA / sales tax
+          session = await this.stripeClient.checkout.sessions.create({
+            ...baseSessionParams,
+            automatic_tax: { enabled: true },
+          });
+        } catch (taxErr: any) {
+          this.logger.warn(`Stripe Tax fallback: ${taxErr.message}`);
+          session = await this.stripeClient.checkout.sessions.create(baseSessionParams);
+        }
 
         const paymentUrl = session.url || `https://checkout.stripe.com/c/pay/${session.id}`;
 
@@ -105,7 +128,7 @@ export class StripeService {
           remainingAmountCents: amountCents,
           currency: company.currency || 'EUR',
           customerName: order.customerName,
-          customerPhone: order.customerPhone,
+          customerPhone: order.customerPhone || customer?.phone,
         };
       } catch (err: any) {
         this.logger.error(`Erro ao criar sessão na Stripe: ${err.message}`, err.stack);
