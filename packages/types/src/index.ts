@@ -980,6 +980,69 @@ export interface CouponQuotaResponse {
   tier: SubscriptionTier;
 }
 
+// Combos & Kits Promocionais
+export interface ComboItem {
+  productId: string;
+  productName: string;
+  quantity: number;
+  unitPriceCents: number;
+  unitCostCents: number;
+  flavor?: string;
+  notes?: string;
+}
+
+export interface Combo {
+  id: string;
+  companyId: string;
+  name: string;
+  description?: string;
+  category?: string;
+  imageUrl?: string;
+  items: ComboItem[];
+  originalTotalCents: number;
+  totalCostCents: number;
+  priceCents: number;
+  discountCents: number;
+  discountPercent: number;
+  profitCents: number;
+  profitMarginPercent: number;
+  isAvailable: boolean;
+  minLeadTimeHours?: number;
+  syncAsProduct?: boolean;
+  productId?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateComboDto {
+  name: string;
+  description?: string;
+  category?: string;
+  imageUrl?: string;
+  items: Array<{
+    productId: string;
+    productName: string;
+    quantity: number;
+    unitPriceCents: number;
+    unitCostCents: number;
+    flavor?: string;
+    notes?: string;
+  }>;
+  priceCents: number; // Preço promocional do combo
+  isAvailable?: boolean;
+  minLeadTimeHours?: number;
+  syncAsProduct?: boolean;
+}
+
+export interface UpdateComboDto extends Partial<CreateComboDto> {}
+
+export interface ComboQuotaResponse {
+  combosCount: number;
+  combosLimit: number;
+  canCreate: boolean;
+  tier: SubscriptionTier;
+}
+
 // API Responses
 export interface ApiResponse<T> {
   success: boolean;

@@ -390,4 +390,33 @@ export const validateCouponSchema = z.object({
 });
 export type ValidateCouponSchemaInput = z.infer<typeof validateCouponSchema>;
 
+// Combos Validation
+export const comboItemSchema = z.object({
+  productId: z.string().min(1, 'ID do produto é obrigatório'),
+  productName: z.string().min(1, 'Nome do produto é obrigatório'),
+  quantity: z.number().positive('Quantidade deve ser maior que zero'),
+  unitPriceCents: z.number().nonnegative(),
+  unitCostCents: z.number().nonnegative(),
+  flavor: z.string().optional(),
+  notes: z.string().optional(),
+});
+
+export const createComboSchema = z.object({
+  name: z.string().min(2, 'Nome do combo deve ter pelo menos 2 caracteres'),
+  description: z.string().optional(),
+  category: z.string().optional().default('Combos & Kits'),
+  imageUrl: z.string().optional(),
+  items: z.array(comboItemSchema).min(1, 'Adicione pelo menos um produto ao combo'),
+  priceCents: z.number().positive('Preço do combo deve ser maior que zero'),
+  isAvailable: z.boolean().optional().default(true),
+  minLeadTimeHours: z.number().nonnegative().optional(),
+  syncAsProduct: z.boolean().optional().default(true),
+});
+
+export type CreateComboInput = z.infer<typeof createComboSchema>;
+
+export const updateComboSchema = createComboSchema.partial();
+export type UpdateComboInput = z.infer<typeof updateComboSchema>;
+
+
 

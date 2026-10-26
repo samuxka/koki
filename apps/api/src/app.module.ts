@@ -19,6 +19,7 @@ import { ProductionPlannerModule } from './modules/production-planner/production
 import { DeliveryPlannerModule } from './modules/delivery-planner/delivery-planner.module';
 import { LabelsModule } from './modules/labels/labels.module';
 import { CouponsModule } from './modules/coupons/coupons.module';
+import { CombosModule } from './modules/combos/combos.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { CouponsModule } from './modules/coupons/coupons.module';
     DeliveryPlannerModule,
     LabelsModule,
     CouponsModule,
+    CombosModule,
   ],
 })
 export class AppModule {}

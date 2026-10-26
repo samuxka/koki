@@ -144,7 +144,7 @@ const TOOLS_CATALOG: ToolItem[] = [
     category: 'sales',
     icon: Percent,
     featureKey: 'combos.create',
-    isProOnly: true,
+    isProOnly: false,
   },
   {
     id: 'whatsapp_bot',
@@ -267,6 +267,11 @@ export default function ToolsScreen() {
 
     if (tool.id === 'coupons') {
       router.push('/coupons' as any);
+      return;
+    }
+
+    if (tool.id === 'combos') {
+      router.push('/combos' as any);
       return;
     }
 
