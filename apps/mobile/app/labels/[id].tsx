@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,8 @@ import {
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { captureRef } from 'react-native-view-shot';
+import * as Sharing from 'expo-sharing';
 import {
   ArrowLeft,
   Printer,
@@ -23,6 +25,7 @@ import {
   CheckCircle2,
   PackageCheck,
   Building,
+  Image as ImageIcon,
 } from 'lucide-react-native';
 import { colors, spacing, typography, borderRadius } from '../../src/theme';
 import { Card, Badge, Button, LoadingState } from '../../src/components/ui';
@@ -36,6 +39,8 @@ export default function LabelDetailScreen() {
   const queryClient = useQueryClient();
   const { id } = useLocalSearchParams<{ id: string }>();
   const { company } = useAuthStore();
+  const labelRef = useRef<any>(null);
+  const [isCapturing, setIsCapturing] = useState(false);
 
   const { data: batch, isLoading } = useQuery<LabelBatch>({
     queryKey: ['label-batch-detail', id],
@@ -65,7 +70,41 @@ export default function LabelDetailScreen() {
     return <LoadingState message="Carregando dados da etiqueta..." variant="detail" />;
   }
 
-  const handleShare = async () => {
+  const handleShareImage = async () => {
+    if (!labelRef.current) return;
+    try {
+      setIsCapturing(true);
+
+      // Captura o componente como imagem PNG de alta definição
+      const uri = await captureRef(labelRef, {
+        format: 'png',
+        quality: 1.0,
+        result: 'tmpfile',
+      });
+
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (isAvailable) {
+        await Sharing.shareAsync(uri, {
+          mimeType: 'image/png',
+          dialogTitle: `Etiqueta de Validade ${batch.batchCode} - ${batch.productName}`,
+          UTI: 'public.png',
+        });
+      } else {
+        await Share.share({
+          title: `Etiqueta ${batch.batchCode}`,
+          message: `Lote: ${batch.batchCode} - ${batch.productName}\nValidade: ${batch.expiryDate}`,
+          url: uri,
+        });
+      }
+    } catch (error) {
+      console.error('Erro ao compartilhar imagem:', error);
+      Alert.alert('Erro', 'Não foi possível gerar a imagem da etiqueta.');
+    } finally {
+      setIsCapturing(false);
+    }
+  };
+
+  const handleShareText = async () => {
     try {
       const message = `🏷️ *ETIQUETA SANITÁRIA DE VALIDADE*\n\n` +
         `*Empresa:* ${company?.tradeName || 'Koki Confeitaria'}\n` +
@@ -206,7 +245,7 @@ export default function LabelDetailScreen() {
         <View style={styles.stickerWrapper}>
           <Text style={styles.sectionHeader}>Visual da Etiqueta Impressa</Text>
 
-          <View style={styles.stickerBox}>
+          <View ref={labelRef} collapsable={false} style={styles.stickerBox}>
             <View style={styles.stickerHeader}>
               <Text style={styles.stickerCompany}>{company?.tradeName || 'KOKI CONFEITARIA'}</Text>
               <Text style={styles.stickerSizeTag}>{batch.labelSize.toUpperCase()}</Text>
@@ -249,8 +288,18 @@ export default function LabelDetailScreen() {
         {/* Action Buttons */}
         <View style={styles.actionSection}>
           <Button
-            title="Compartilhar Dados da Etiqueta"
-            onPress={handleShare}
+            title={isCapturing ? 'Gerando Imagem...' : 'Compartilhar Imagem da Etiqueta (PNG)'}
+            icon={<ImageIcon size={18} color="#ffffff" />}
+            onPress={handleShareImage}
+            loading={isCapturing}
+            style={{ marginBottom: spacing.sm }}
+          />
+
+          <Button
+            title="Compartilhar Texto Formatado"
+            variant="outline"
+            icon={<Share2 size={16} color={colors.primary} />}
+            onPress={handleShareText}
             style={{ marginBottom: spacing.sm }}
           />
 

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   View,
   Text,
@@ -11,6 +11,8 @@ import {
 import { useRouter } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { captureRef } from 'react-native-view-shot';
+import * as Sharing from 'expo-sharing';
 import {
   ArrowLeft,
   Tag,
@@ -22,6 +24,7 @@ import {
   Check,
   Eye,
   Sliders,
+  Image as ImageIcon,
 } from 'lucide-react-native';
 import { colors, spacing, typography, borderRadius } from '../../src/theme';
 import { Card, Button, Input, Badge } from '../../src/components/ui';
@@ -70,6 +73,8 @@ export default function NewLabelScreen() {
   const [labelSize, setLabelSize] = useState<LabelSize>('standard');
   const [quantity, setQuantity] = useState('10');
   const [notes, setNotes] = useState('');
+  const previewRef = useRef<any>(null);
+  const [isSharingPreview, setIsSharingPreview] = useState(false);
 
   // Fetch products and recipes for fast auto-fill
   const { data: products = [] } = useQuery<Product[]>({
@@ -106,6 +111,31 @@ export default function NewLabelScreen() {
     const base = new Date(productionDate || todayStr);
     base.setDate(base.getDate() + days);
     setExpiryDate(base.toISOString().split('T')[0]);
+  };
+
+  const handleSharePreviewImage = async () => {
+    if (!previewRef.current) return;
+    try {
+      setIsSharingPreview(true);
+      const uri = await captureRef(previewRef, {
+        format: 'png',
+        quality: 1.0,
+        result: 'tmpfile',
+      });
+      const isAvailable = await Sharing.isAvailableAsync();
+      if (isAvailable) {
+        await Sharing.shareAsync(uri, {
+          mimeType: 'image/png',
+          dialogTitle: `Etiqueta ${productName || 'Prévia'}`,
+          UTI: 'public.png',
+        });
+      }
+    } catch (e) {
+      console.error(e);
+      Alert.alert('Erro', 'Não foi possível gerar a imagem da prévia.');
+    } finally {
+      setIsSharingPreview(false);
+    }
   };
 
   const createMutation = useMutation({
@@ -373,7 +403,7 @@ export default function NewLabelScreen() {
             <Text style={styles.previewSectionTitle}>Pré-visualização da Etiqueta em Tempo Real</Text>
           </View>
 
-          <View style={styles.liveLabelContainer}>
+          <View ref={previewRef} collapsable={false} style={styles.liveLabelContainer}>
             {/* Top row */}
             <View style={styles.labelHeaderRow}>
               <Text style={styles.labelCompany}>{company?.tradeName || 'KOKI CONFEITARIA'}</Text>
@@ -422,6 +452,19 @@ export default function NewLabelScreen() {
               </Text>
             </View>
           </View>
+
+          {/* Quick share preview image button */}
+          <TouchableOpacity
+            style={styles.sharePreviewBtn}
+            onPress={handleSharePreviewImage}
+            disabled={isSharingPreview}
+            activeOpacity={0.8}
+          >
+            <ImageIcon size={16} color={colors.primary} style={{ marginRight: 6 }} />
+            <Text style={styles.sharePreviewBtnText}>
+              {isSharingPreview ? 'Gerando Imagem...' : 'Compartilhar Imagem desta Prévia'}
+            </Text>
+          </TouchableOpacity>
         </View>
 
         {/* Action Button */}
@@ -746,5 +789,21 @@ const styles = StyleSheet.create({
     fontFamily: 'Courier',
     color: '#555',
     marginTop: 2,
+  },
+  sharePreviewBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.surface,
+    paddingVertical: 10,
+    borderRadius: borderRadius.md,
+    marginTop: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  sharePreviewBtnText: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
+    color: colors.primary,
   },
 });
