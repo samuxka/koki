@@ -72,7 +72,7 @@ export default function DashboardScreen() {
   });
 
   if (loadingOverview && !overview) {
-    return <LoadingState message="Carregando painel do Koki..." />;
+    return <LoadingState message="Carregando painel do Koki..." variant="dashboard" />;
   }
 
   const currency = overview?.company?.currency || 'EUR';

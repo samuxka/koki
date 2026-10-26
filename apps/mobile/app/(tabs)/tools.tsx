@@ -173,7 +173,7 @@ const TOOLS_CATALOG: ToolItem[] = [
     category: 'cost',
     icon: Tag,
     featureKey: 'labels_generator.access',
-    isProOnly: true,
+    isProOnly: false,
   },
 ];
 
@@ -252,6 +252,11 @@ export default function ToolsScreen() {
 
     if (tool.id === 'recipe_scaler') {
       router.push('/recipe-scaler' as any);
+      return;
+    }
+
+    if (tool.id === 'labels_generator') {
+      router.push('/labels' as any);
       return;
     }
 

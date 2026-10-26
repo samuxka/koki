@@ -109,7 +109,7 @@ export default function InventoryItemDetailScreen() {
   if (isItemLoading || !item) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <LoadingState message="Carregando detalhes do insumo..." />
+        <LoadingState message="Carregando detalhes do insumo..." variant="detail" />
       </View>
     );
   }

@@ -6,6 +6,7 @@ export * from './Badge';
 export * from './ProgressBar';
 export * from './EmptyState';
 export * from './LoadingState';
+export * from './Skeleton';
 export * from './Header';
 export * from './KokiCookie';
 export * from './KokiLogo';

@@ -202,7 +202,7 @@ export default function OrderDetailsScreen() {
   };
 
   if (isLoading || !data) {
-    return <LoadingState message="Carregando detalhes do pedido..." />;
+    return <LoadingState message="Carregando detalhes do pedido..." variant="detail" />;
   }
 
   const { order, payments } = data;

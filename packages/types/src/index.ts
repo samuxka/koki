@@ -797,6 +797,69 @@ export interface DailyDeliveryPlan {
   monthlyLimit?: number;
 }
 
+// Labels & Batches (Gerador de Etiqueta & Lote)
+export type LabelSize = 'small' | 'standard' | 'large'; // 50x30mm, 60x40mm, 80x50mm
+
+export type BatchStorageCondition =
+  | 'room_temperature'
+  | 'refrigerated'
+  | 'frozen'
+  | 'dry_and_fresh'
+  | 'after_opening_48h'
+  | string;
+
+export type LabelBatchStatus = 'active' | 'expiring_soon' | 'expired' | 'depleted';
+
+export interface LabelBatch {
+  id: string;
+  companyId: string;
+  batchCode: string; // ex: "LOT-20261026-001"
+  productName: string;
+  productId?: string;
+  recipeId?: string;
+  productionDate: string; // YYYY-MM-DD
+  expiryDate: string;     // YYYY-MM-DD
+  shelfLifeDays?: number;
+  storageCondition: BatchStorageCondition;
+  netWeight?: string;     // ex: "350g", "1 kg", "6 un"
+  ingredientsText?: string;
+  allergensText?: string;
+  nutritionalHighlights?: string; // ex: "Porção 50g: 135 kcal"
+  labelSize: LabelSize;
+  quantity: number;
+  barcodeOrQrContent?: string;
+  notes?: string;
+  status: LabelBatchStatus;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface CreateLabelBatchDto {
+  batchCode?: string;
+  productName: string;
+  productId?: string;
+  recipeId?: string;
+  productionDate: string;
+  expiryDate: string;
+  shelfLifeDays?: number;
+  storageCondition: string;
+  netWeight?: string;
+  ingredientsText?: string;
+  allergensText?: string;
+  nutritionalHighlights?: string;
+  labelSize?: LabelSize;
+  quantity?: number;
+  notes?: string;
+}
+
+export interface LabelQuotaResponse {
+  usedThisMonth: number;
+  monthlyLimit: number; // 10, 300, -1
+  remainingThisMonth: number; // -1 if unlimited
+  isLimitReached: boolean;
+  tier: SubscriptionTier;
+}
+
 // API Responses
 export interface ApiResponse<T> {
   success: boolean;

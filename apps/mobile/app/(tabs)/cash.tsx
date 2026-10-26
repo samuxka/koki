@@ -71,7 +71,7 @@ export default function CashScreen() {
   const transactions = transactionsData?.items || [];
 
   if (loadingSummary && !summary) {
-    return <LoadingState message="Carregando finanças..." />;
+    return <LoadingState message="Carregando finanças..." variant="dashboard" />;
   }
 
   return (

@@ -131,7 +131,7 @@ export default function ProductDetailScreen() {
   };
 
   if (isLoading && !data) {
-    return <LoadingState message="Carregando dados do produto..." />;
+    return <LoadingState message="Carregando dados do produto..." variant="detail" />;
   }
 
   if (!data?.product) {

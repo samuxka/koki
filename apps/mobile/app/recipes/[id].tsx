@@ -104,7 +104,7 @@ export default function RecipeDetailScreen() {
   if (isLoading || !recipe) {
     return (
       <View style={[styles.container, { paddingTop: insets.top }]}>
-        <LoadingState message="Carregando ficha técnica..." />
+        <LoadingState message="Carregando ficha técnica..." variant="detail" />
       </View>
     );
   }

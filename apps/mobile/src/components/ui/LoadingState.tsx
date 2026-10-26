@@ -1,45 +1,36 @@
-import React, { useEffect, useRef } from 'react';
-import { View, Animated, Text, StyleSheet } from 'react-native';
-import { colors, spacing, typography } from '../../theme';
-import { KokiCookie } from './KokiCookie';
+import React from 'react';
+import { View, Text, StyleSheet } from 'react-native';
+import { colors, spacing, typography, borderRadius } from '../../theme';
+import { SkeletonList, SkeletonDashboard, SkeletonDetail } from './Skeleton';
 
-interface LoadingStateProps {
+export interface LoadingStateProps {
   message?: string;
-  size?: number;
+  variant?: 'list' | 'dashboard' | 'detail' | 'cards' | 'default';
+  size?: number; // Kept for backward compatibility
 }
 
 export const LoadingState: React.FC<LoadingStateProps> = ({
-  message = 'Carregando dados...',
-  size = 54,
+  message,
+  variant = 'list',
 }) => {
-  const pulseAnim = useRef(new Animated.Value(1)).current;
-
-  useEffect(() => {
-    const pulse = Animated.loop(
-      Animated.sequence([
-        Animated.timing(pulseAnim, {
-          toValue: 1.12,
-          duration: 700,
-          useNativeDriver: true,
-        }),
-        Animated.timing(pulseAnim, {
-          toValue: 1,
-          duration: 700,
-          useNativeDriver: true,
-        }),
-      ])
-    );
-    pulse.start();
-
-    return () => pulse.stop();
-  }, [pulseAnim]);
-
   return (
     <View style={styles.container}>
-      <Animated.View style={{ transform: [{ scale: pulseAnim }], marginBottom: spacing.md }}>
-        <KokiCookie size={size} variant="brown" />
-      </Animated.View>
-      <Text style={styles.text}>{message}</Text>
+      {/* Optional subtle status indicator */}
+      {message && (
+        <View style={styles.pillContainer}>
+          <View style={styles.statusDot} />
+          <Text style={styles.pillText}>{message}</Text>
+        </View>
+      )}
+
+      {/* Modern Flat Design Skeleton View */}
+      {variant === 'dashboard' ? (
+        <SkeletonDashboard />
+      ) : variant === 'detail' ? (
+        <SkeletonDetail />
+      ) : (
+        <SkeletonList />
+      )}
     </View>
   );
 };
@@ -47,14 +38,29 @@ export const LoadingState: React.FC<LoadingStateProps> = ({
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.xl,
     backgroundColor: colors.background,
   },
-  text: {
-    fontSize: typography.sizes.md,
-    color: colors.textSecondary,
-    fontWeight: typography.weights.medium,
+  pillContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    backgroundColor: '#ebdccb',
+    paddingVertical: 5,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.full,
+    marginTop: spacing.sm,
+    marginBottom: spacing.xs,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: colors.primary,
+    marginRight: 6,
+  },
+  pillText: {
+    fontSize: typography.sizes.xs,
+    color: colors.primaryDark,
+    fontWeight: typography.weights.semibold,
   },
 });

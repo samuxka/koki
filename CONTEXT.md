@@ -265,7 +265,27 @@ Para continuar o desenvolvimento nas próximas sessões, implemente os módulos 
   - Ações rápidas por parada com 1 toque: **Google Maps**, **Waze**, **WhatsApp do cliente com mensagem pré-formatada** e **Ligação telefônica**.
   - Compartilhamento do roteiro/romaneio completo com o motoboy via WhatsApp (`Share.share`).
 
-### Prioridade 5: Automações e WhatsApp Bot (Plano Business)
+### Prioridade 5: Gerador de Etiquetas & Lotes (`labels`) — CONCLUÍDO ✅
+- **Backend:**
+  - Criado `apps/api/src/modules/labels/` (schema `LabelBatch`, service, controller e module).
+  - Multi-tenancy isolado por `companyId` com controle de quotas mensais por plano (Free: 10/mês, Pro: 300/mês, Business: Ilimitado).
+  - `GET /labels/batches`: listagem paginada com busca por código de lote ou produto, e filtros de validade (Todos, Válidos, A Vencer, Vencidos).
+  - `GET /labels/quota`: consumo mensal atual vs limites do plano SaaS.
+  - `POST /labels/batches`: emissão de novos lotes com código sequencial automático (`LOT-AAAAMMDD-001`), cálculo de validade e especificações sanitárias.
+  - `GET /labels/batches/:id/html`: geração de HTML profissional formatado com regras CSS `@page` para rolos de etiquetas térmicas (50x30mm, 60x40mm, 80x50mm) e impressão A4.
+  - `PATCH /labels/batches/:id/status` e `DELETE /labels/batches/:id`.
+- **Mobile:**
+  - Telas em `apps/mobile/app/labels/`:
+    - `index.tsx`: Dashboard de franquia mensal com barra de progresso, atalho de upgrade Pro, busca e cards informativos com compartilhamento direto.
+    - `new.tsx`: Formulário completo com importação ágil de receitas e produtos existentes, atalhos de validade (+3d, +5d, +7d...), seleção de armazenamento, alérgenos regulatórios e **Pré-visualização Interativa em Tempo Real** do rótulo com código de barras visual.
+    - `[id].tsx`: Detalhes completos do lote, visualização de impressão e compartilhamento via WhatsApp (`Share.share`).
+
+### Prioridade 6: Carregamento das Páginas com Skeletons Shimmer — CONCLUÍDO ✅
+- Removido o bounce do biscoito do carregamento das páginas.
+- Implementado sistema de Skeleton (`Skeleton.tsx` e `LoadingState.tsx`) com animação fluida de shimmer/pulso Flat Design nos tons suaves da confeitaria (`#ebdccb` / `#f0e4d4`).
+- Suporte a variantes inteligentes: `list`, `dashboard`, `detail` e cards.
+
+### Prioridade 7: Automações e WhatsApp Bot (Plano Business)
 - Envio automático de recibos e notificações de "Pedido Pronto para Retirada".
 
 ---

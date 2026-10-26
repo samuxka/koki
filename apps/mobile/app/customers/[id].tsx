@@ -148,7 +148,7 @@ export default function CustomerDetailScreen() {
   };
 
   if (isLoading || !data) {
-    return <LoadingState message="A carregar dados do cliente..." />;
+    return <LoadingState message="A carregar dados do cliente..." variant="detail" />;
   }
 
   const { customer, stats, loyaltyCard, recentOrders } = data;
