@@ -253,6 +253,8 @@ export interface Order {
   customerPhone?: string;
   items: OrderItem[];
   discountCents: number;
+  couponCode?: string;
+  couponId?: string;
   deliveryFeeCents: number;
   totalAmountCents: number;
   paidAmountCents: number;
@@ -913,6 +915,69 @@ export interface CostCalculationResult {
     waste: number;
     profit: number;
   };
+}
+
+// Coupons (Cupons de Desconto & Campanhas Promocionais)
+export type DiscountType = 'percentage' | 'fixed';
+export type CouponStatus = 'active' | 'inactive' | 'expired' | 'depleted';
+
+export interface Coupon {
+  id: string;
+  companyId: string;
+  code: string;
+  description?: string;
+  discountType: DiscountType;
+  discountValue: number; // se percentage: 1..100; se fixed: cêntimos
+  minOrderAmountCents?: number;
+  maxDiscountAmountCents?: number; // teto de desconto para porcentagem
+  usageLimit?: number; // total de utilizações (0 ou undefined para ilimitado)
+  usageCount: number;
+  usageLimitPerCustomer?: number;
+  startDate?: string; // YYYY-MM-DD
+  expiresAt?: string; // YYYY-MM-DD
+  isActive: boolean;
+  computedStatus: CouponStatus;
+  applicableProductIds?: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface CreateCouponDto {
+  code: string;
+  description?: string;
+  discountType: DiscountType;
+  discountValue: number;
+  minOrderAmountCents?: number;
+  maxDiscountAmountCents?: number;
+  usageLimit?: number;
+  usageLimitPerCustomer?: number;
+  startDate?: string;
+  expiresAt?: string;
+  isActive?: boolean;
+  applicableProductIds?: string[];
+}
+
+export interface UpdateCouponDto extends Partial<CreateCouponDto> {}
+
+export interface ValidateCouponInput {
+  code: string;
+  orderTotalCents: number;
+  customerId?: string;
+  productIds?: string[];
+}
+
+export interface ValidateCouponResult {
+  valid: boolean;
+  coupon?: Coupon;
+  discountCents: number;
+  message?: string;
+}
+
+export interface CouponQuotaResponse {
+  activeCouponsCount: number;
+  activeCouponsLimit: number;
+  canCreate: boolean;
+  tier: SubscriptionTier;
 }
 
 // API Responses

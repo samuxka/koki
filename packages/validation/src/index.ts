@@ -120,6 +120,8 @@ export const createOrderSchema = z.object({
   customerId: z.string().min(1, 'Selecione um cliente'),
   items: z.array(orderItemSchema).min(1, 'Adicione pelo menos um item ao pedido'),
   discountCents: z.number().nonnegative().default(0),
+  couponCode: z.string().optional(),
+  couponId: z.string().optional(),
   deliveryFeeCents: z.number().nonnegative().default(0),
   deliveryDate: z.string().min(1, 'A data de entrega é obrigatória'),
   deliveryMethod: z.enum(['pickup', 'delivery']).default('pickup'),
@@ -351,4 +353,41 @@ export const updateDeliveryStatusSchema = z.object({
   notes: z.string().optional(),
 });
 export type UpdateDeliveryStatusInput = z.infer<typeof updateDeliveryStatusSchema>;
+
+// Coupons Validation
+export const createCouponSchema = z.object({
+  code: z
+    .string()
+    .min(2, 'O código do cupom deve ter pelo menos 2 caracteres')
+    .max(30, 'O código deve ter no máximo 30 caracteres')
+    .transform((val) => val.trim().toUpperCase()),
+  description: z.string().optional(),
+  discountType: z.enum(['percentage', 'fixed']),
+  discountValue: z.number().positive('O valor do desconto deve ser maior que zero'),
+  minOrderAmountCents: z.number().nonnegative().optional().default(0),
+  maxDiscountAmountCents: z.number().positive().optional(),
+  usageLimit: z.number().nonnegative().optional(),
+  usageLimitPerCustomer: z.number().nonnegative().optional(),
+  startDate: z.string().optional(),
+  expiresAt: z.string().optional(),
+  isActive: z.boolean().optional().default(true),
+  applicableProductIds: z.array(z.string()).optional(),
+});
+
+export type CreateCouponInput = z.infer<typeof createCouponSchema>;
+
+export const updateCouponSchema = createCouponSchema.partial();
+export type UpdateCouponInput = z.infer<typeof updateCouponSchema>;
+
+export const validateCouponSchema = z.object({
+  code: z
+    .string()
+    .min(1, 'Código é obrigatório')
+    .transform((val) => val.trim().toUpperCase()),
+  orderTotalCents: z.number().nonnegative('Total do pedido inválido'),
+  customerId: z.string().optional(),
+  productIds: z.array(z.string()).optional(),
+});
+export type ValidateCouponSchemaInput = z.infer<typeof validateCouponSchema>;
+
 

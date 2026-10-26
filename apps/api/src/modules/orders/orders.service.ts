@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException, Optional } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Order, OrderDocument } from './schemas/order.schema';
@@ -6,6 +6,7 @@ import { Payment, PaymentDocument } from './schemas/payment.schema';
 import { Customer, CustomerDocument } from '../customers/schemas/customer.schema';
 import { Product, ProductDocument } from '../products/schemas/product.schema';
 import { CashflowService } from '../cashflow/cashflow.service';
+import { CouponsService } from '../coupons/coupons.service';
 import { CreateOrderInput, CreatePaymentInput, UpdateOrderStatusInput } from '@koki/validation';
 import { calculateOrderTotals } from '../../common/utils/currency.utils';
 
@@ -17,6 +18,7 @@ export class OrdersService {
     @InjectModel(Customer.name) private customerModel: Model<CustomerDocument>,
     @InjectModel(Product.name) private productModel: Model<ProductDocument>,
     private cashflowService: CashflowService,
+    @Optional() private couponsService?: CouponsService,
   ) {}
 
   async create(companyId: string | Types.ObjectId, input: CreateOrderInput, userId?: string): Promise<OrderDocument> {
@@ -85,6 +87,8 @@ export class OrdersService {
       customerPhone: customer.phone,
       items: processedItems,
       discountCents: input.discountCents || 0,
+      couponCode: input.couponCode?.trim()?.toUpperCase() || undefined,
+      couponId: input.couponId ? new Types.ObjectId(input.couponId) : undefined,
       deliveryFeeCents: input.deliveryFeeCents || 0,
       totalAmountCents,
       paidAmountCents: initialPaidCents,
@@ -96,6 +100,13 @@ export class OrdersService {
       notes: input.notes?.trim(),
       createdBy: userId ? new Types.ObjectId(userId) : undefined,
     });
+
+    // 5.1 Increment coupon usage if a coupon was redeemed
+    if (order.couponId && this.couponsService) {
+      await this.couponsService
+        .incrementUsage(companyObjectId, order.couponId, customer._id)
+        .catch(() => {});
+    }
 
     // 6. Handle Initial Payment if present
     if (input.initialPayment && initialPaidCents > 0) {
@@ -218,6 +229,8 @@ export class OrdersService {
           notes: i.notes,
         })),
         discountCents: o.discountCents,
+        couponCode: (o as any).couponCode,
+        couponId: (o as any).couponId?.toString(),
         deliveryFeeCents: o.deliveryFeeCents,
         totalAmountCents: o.totalAmountCents,
         paidAmountCents: o.paidAmountCents,
@@ -270,6 +283,8 @@ export class OrdersService {
           notes: i.notes,
         })),
         discountCents: order.discountCents,
+        couponCode: (order as any).couponCode,
+        couponId: (order as any).couponId?.toString(),
         deliveryFeeCents: order.deliveryFeeCents,
         totalAmountCents: order.totalAmountCents,
         paidAmountCents: order.paidAmountCents,

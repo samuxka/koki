@@ -265,6 +265,11 @@ export default function ToolsScreen() {
       return;
     }
 
+    if (tool.id === 'coupons') {
+      router.push('/coupons' as any);
+      return;
+    }
+
     if (tool.id === 'unit_converter') {
       handleCalculateConversion();
       setActiveToolModal('unit_converter');

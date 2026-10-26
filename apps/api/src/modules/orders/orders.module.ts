@@ -8,6 +8,7 @@ import { Customer, CustomerSchema } from '../customers/schemas/customer.schema';
 import { Product, ProductSchema } from '../products/schemas/product.schema';
 import { CashflowModule } from '../cashflow/cashflow.module';
 import { CompaniesModule } from '../companies/companies.module';
+import { CouponsModule } from '../coupons/coupons.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { CompaniesModule } from '../companies/companies.module';
     ]),
     CashflowModule,
     CompaniesModule,
+    CouponsModule,
   ],
   controllers: [OrdersController],
   providers: [OrdersService],

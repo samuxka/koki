@@ -56,6 +56,12 @@ export class Order {
   @Prop({ default: 0 })
   discountCents: number;
 
+  @Prop({ trim: true, uppercase: true })
+  couponCode?: string;
+
+  @Prop({ type: Types.ObjectId, ref: 'Coupon' })
+  couponId?: Types.ObjectId;
+
   @Prop({ default: 0 })
   deliveryFeeCents: number;
 

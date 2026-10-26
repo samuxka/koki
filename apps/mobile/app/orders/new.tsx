@@ -7,6 +7,7 @@ import {
   TouchableOpacity,
   Alert,
   Modal,
+  TextInput,
 } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -18,8 +19,8 @@ import { Button } from '../../src/components/ui/Button';
 import { api } from '../../src/services/api';
 import { useAuthStore } from '../../src/stores/auth.store';
 import { formatCurrency } from '../../src/utils/formatters';
-import { Customer, Product, CashAccount, ProductComplement } from '@koki/types';
-import { Plus, Trash2, Calendar, User, ShoppingBag, Wallet, X, Check } from 'lucide-react-native';
+import { Customer, Product, CashAccount, ProductComplement, Coupon, ValidateCouponResult } from '@koki/types';
+import { Plus, Trash2, Calendar, User, ShoppingBag, Wallet, X, Check, Ticket, Tag } from 'lucide-react-native';
 
 interface SelectedItem {
   productId: string;
@@ -51,6 +52,9 @@ export default function NewOrderScreen() {
   const [deliveryMethod, setDeliveryMethod] = useState<'pickup' | 'delivery'>('pickup');
   const [deliveryFeeCents, setDeliveryFeeCents] = useState(0);
   const [discountCents, setDiscountCents] = useState(0);
+  const [couponCodeInput, setCouponCodeInput] = useState('');
+  const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
+  const [isValidatingCoupon, setIsValidatingCoupon] = useState(false);
   const [notes, setNotes] = useState('');
 
   // Product Customization Modal State
@@ -195,6 +199,47 @@ export default function NewOrderScreen() {
     setItems(updated);
   };
 
+  const handleApplyCoupon = async () => {
+    const codeToTest = couponCodeInput.trim().toUpperCase();
+    if (!codeToTest) {
+      Alert.alert('Cupom', 'Digite o código do cupom que deseja aplicar.');
+      return;
+    }
+    if (itemsTotalCents === 0) {
+      Alert.alert('Cupom', 'Adicione pelo menos um produto antes de aplicar o cupom.');
+      return;
+    }
+    try {
+      setIsValidatingCoupon(true);
+      const res = await api.post<ValidateCouponResult>('/coupons/validate', {
+        code: codeToTest,
+        orderTotalCents: itemsTotalCents,
+        customerId: selectedCustomerId || undefined,
+      });
+
+      if (res.valid && res.coupon) {
+        setAppliedCoupon(res.coupon);
+        setDiscountCents(res.discountCents);
+        Alert.alert(
+          'Cupom Aplicado!',
+          `Cupom ${res.coupon.code} aplicado com sucesso! Desconto: ${formatCurrency(res.discountCents, currency)}.`,
+        );
+      } else {
+        Alert.alert('Cupom Não Aplicado', res.message || 'Cupom inválido ou expirado.');
+      }
+    } catch (e: any) {
+      Alert.alert('Erro', e.message || 'Falha ao validar cupom.');
+    } finally {
+      setIsValidatingCoupon(false);
+    }
+  };
+
+  const handleRemoveCoupon = () => {
+    setAppliedCoupon(null);
+    setDiscountCents(0);
+    setCouponCodeInput('');
+  };
+
   // Submit Mutation
   const createOrderMutation = useMutation({
     mutationFn: async () => {
@@ -231,6 +276,8 @@ export default function NewOrderScreen() {
           notes: i.notes,
         })),
         discountCents,
+        couponCode: appliedCoupon?.code,
+        couponId: appliedCoupon?.id,
         deliveryFeeCents,
         deliveryDate: new Date(deliveryDate).toISOString(),
         deliveryMethod,
@@ -561,6 +608,49 @@ export default function NewOrderScreen() {
                 );
               })}
             </ScrollView>
+          </View>
+        )}
+      </Card>
+
+      {/* Cupom Promocional */}
+      <Card style={styles.sectionCard}>
+        <View style={styles.sectionHeader}>
+          <Ticket size={18} color={colors.primary} />
+          <Text style={styles.sectionTitle}>Cupom Promocional</Text>
+        </View>
+
+        {appliedCoupon ? (
+          <View style={styles.appliedCouponBox}>
+            <View style={styles.appliedCouponLeft}>
+              <Tag size={16} color={colors.success} style={{ marginRight: 8 }} />
+              <View>
+                <Text style={styles.appliedCouponCode}>{appliedCoupon.code}</Text>
+                <Text style={styles.appliedCouponDesc}>
+                  Desconto de {formatCurrency(discountCents, currency)} aplicado
+                </Text>
+              </View>
+            </View>
+            <TouchableOpacity onPress={handleRemoveCoupon} style={styles.removeCouponBtn}>
+              <X size={16} color={colors.danger} />
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <View style={styles.couponInputRow}>
+            <TextInput
+              style={styles.couponTextInput}
+              placeholder="Código (ex: DOCE10)"
+              placeholderTextColor={colors.textMuted}
+              value={couponCodeInput}
+              onChangeText={(txt: string) => setCouponCodeInput(txt.toUpperCase())}
+              autoCapitalize="characters"
+            />
+            <Button
+              title="Aplicar"
+              size="sm"
+              loading={isValidatingCoupon}
+              onPress={handleApplyCoupon}
+              style={{ minWidth: 84 }}
+            />
           </View>
         )}
       </Card>
@@ -1312,5 +1402,59 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.lg,
     fontWeight: typography.weights.bold,
     color: colors.primary,
+  },
+  appliedCouponBox: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#f1f8f3',
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    borderWidth: 1,
+    borderColor: '#c6e7ce',
+    marginTop: spacing.xs,
+  },
+  appliedCouponLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  appliedCouponCode: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+    color: colors.success,
+  },
+  appliedCouponDesc: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
+  removeCouponBtn: {
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    backgroundColor: '#ffffff',
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#e0d5c5',
+  },
+  couponInputRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: spacing.xs,
+  },
+  couponTextInput: {
+    flex: 1,
+    height: 40,
+    backgroundColor: '#ffffff',
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.sm,
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.semibold,
+    color: colors.text,
   },
 });
