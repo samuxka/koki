@@ -10,6 +10,7 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "postinstall": "npm run build --workspace=@koki/types --workspace=@koki/validation",
+    "start": "node apps/api/dist/main.js",
     "dev:api": "npm run start:dev --workspace=@koki/api",
     "dev:mobile": "npm run start --workspace=@koki/mobile",
     "lint": "npm run lint --workspaces --if-present",
