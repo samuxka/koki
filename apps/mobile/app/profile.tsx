@@ -98,6 +98,32 @@ export default function ProfileScreen() {
           <Text style={styles.label}>Moeda Principal:</Text>
           <Text style={styles.value}>{company?.currency || 'EUR'}</Text>
         </View>
+
+        <View style={[styles.row, { alignItems: 'flex-start', marginTop: 4 }]}>
+          <Text style={styles.label}>Endereço (Partida):</Text>
+          <Text
+            style={[
+              styles.value,
+              { flex: 1, textAlign: 'right', marginLeft: spacing.sm },
+              !company?.address?.street && !company?.address?.city && { color: colors.textMuted },
+            ]}
+            numberOfLines={2}
+          >
+            {company?.address?.street || company?.address?.city
+              ? [
+                  company?.address?.street
+                    ? `${company.address.street}${company.address.number ? `, ${company.address.number}` : ''}`
+                    : null,
+                  company?.address?.neighborhood,
+                  company?.address?.postalCode
+                    ? `${company.address.postalCode}${company.address.city ? ` ${company.address.city}` : ''}`
+                    : company?.address?.city,
+                ]
+                  .filter(Boolean)
+                  .join(' - ')
+              : 'Não cadastrado (configure abaixo)'}
+          </Text>
+        </View>
       </Card>
 
       {/* Plano & Assinatura */}
@@ -150,7 +176,7 @@ export default function ProfileScreen() {
         >
           <View style={styles.navLeft}>
             <Settings size={18} color={colors.primary} />
-            <Text style={styles.navTitle}>Configurações da Empresa</Text>
+            <Text style={styles.navTitle}>Configurações & Endereço da Empresa</Text>
           </View>
           <ChevronRight size={18} color={colors.textMuted} />
         </TouchableOpacity>

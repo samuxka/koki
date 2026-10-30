@@ -116,9 +116,36 @@ export class CompaniesService {
     companyId: string | Types.ObjectId,
     data: Partial<Company>,
   ): Promise<CompanyDocument> {
+    const updatePayload: Record<string, any> = {};
+    if (data.tradeName !== undefined && data.tradeName.trim()) {
+      updatePayload.tradeName = data.tradeName.trim();
+    }
+    if (data.legalName !== undefined) {
+      updatePayload.legalName = data.legalName.trim();
+    }
+    if (data.taxId !== undefined) {
+      updatePayload.taxId = data.taxId.trim();
+    }
+    if (data.phone !== undefined) {
+      updatePayload.phone = data.phone.trim();
+    }
+    if (data.email !== undefined) {
+      updatePayload.email = data.email.trim();
+    }
+    if (data.address !== undefined) {
+      updatePayload.address = {
+        street: data.address.street?.trim() || undefined,
+        number: data.address.number?.trim() || undefined,
+        complement: data.address.complement?.trim() || undefined,
+        neighborhood: data.address.neighborhood?.trim() || undefined,
+        city: data.address.city?.trim() || undefined,
+        postalCode: data.address.postalCode?.trim() || undefined,
+      };
+    }
+
     const company = await this.companyModel.findByIdAndUpdate(
       companyId,
-      { $set: data },
+      { $set: updatePayload },
       { new: true },
     );
     if (!company) {

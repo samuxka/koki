@@ -55,6 +55,7 @@ import {
   ProgressBar,
 } from '../../src/components/ui';
 import { useAlertStore } from '../../src/stores/alert.store';
+import { useAuthStore } from '../../src/stores/auth.store';
 
 type ShiftFilter = 'all' | 'morning' | 'afternoon' | 'evening';
 
@@ -113,6 +114,15 @@ export default function DeliveryPlannerScreen() {
   const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const { showAlert } = useAlertStore();
+  const { company } = useAuthStore();
+
+  const companyFormattedAddress = useMemo(() => {
+    const addr = company?.address;
+    if (!addr) return '';
+    const streetPart = [addr.street, addr.number, addr.complement].filter(Boolean).join(', ');
+    const cityPart = [addr.postalCode, addr.city].filter(Boolean).join(' ');
+    return [streetPart, addr.neighborhood, cityPart].filter(Boolean).join(' - ');
+  }, [company?.address]);
 
   const todayStr = useMemo(() => formatIsoDate(new Date()), []);
   const tomorrowStr = useMemo(() => {
@@ -165,10 +175,12 @@ export default function DeliveryPlannerScreen() {
   });
 
   useEffect(() => {
-    if (plan?.routeSummary?.originAddress && !originAddressInput) {
+    if (companyFormattedAddress) {
+      setOriginAddressInput(companyFormattedAddress);
+    } else if (plan?.routeSummary?.originAddress) {
       setOriginAddressInput(plan.routeSummary.originAddress);
     }
-  }, [plan?.routeSummary?.originAddress]);
+  }, [companyFormattedAddress, plan?.routeSummary?.originAddress]);
 
   // 2. Mutations
   const optimizeRouteMutation = useMutation({
@@ -796,35 +808,23 @@ export default function DeliveryPlannerScreen() {
                   </View>
                   <View style={{ flex: 1 }}>
                     <Text style={styles.routeOptimizerTitle}>Rota Eficiente & Taxas</Text>
-                    <Text style={styles.routeOptimizerSubtitle} numberOfLines={1}>
-                      Partida: {originAddressInput || plan?.routeSummary?.originAddress || 'Lisboa, Portugal'}
+                    <Text style={styles.routeOptimizerSubtitle} numberOfLines={2}>
+                      Partida (Empresa):{' '}
+                      {companyFormattedAddress ||
+                        plan?.routeSummary?.originAddress ||
+                        'Endereço não cadastrado nas Configurações da Conta'}
                     </Text>
                   </View>
                 </View>
                 <TouchableOpacity
                   style={styles.editOriginBtn}
-                  onPress={() => setIsEditingOrigin(!isEditingOrigin)}
+                  onPress={() => router.push('/settings')}
                 >
                   <Text style={styles.editOriginBtnText}>
-                    {isEditingOrigin ? 'Fechar' : 'Alterar Partida'}
+                    {companyFormattedAddress ? 'Editar na Conta' : 'Cadastrar Endereço'}
                   </Text>
                 </TouchableOpacity>
               </View>
-
-              {isEditingOrigin && (
-                <View style={styles.originEditorBox}>
-                  <Text style={styles.originEditorLabel}>
-                    Endereço de Partida (Confeitaria / Loja):
-                  </Text>
-                  <TextInput
-                    style={styles.originTextInput}
-                    placeholder="Ex: Rua Augusta 100, 1100-053 Lisboa"
-                    placeholderTextColor={colors.textMuted}
-                    value={originAddressInput}
-                    onChangeText={setOriginAddressInput}
-                  />
-                </View>
-              )}
 
               {/* Métricas de Distância, Tempo e Sugestão de Taxas */}
               <View style={styles.routeMetricsRow}>
@@ -878,7 +878,30 @@ export default function DeliveryPlannerScreen() {
                   disabled={
                     optimizeRouteMutation.isPending || !plan || plan.deliveries.length === 0
                   }
-                  onPress={() => optimizeRouteMutation.mutate()}
+                  onPress={() => {
+                    if (!companyFormattedAddress && !plan?.routeSummary?.originAddress) {
+                      showAlert({
+                        title: 'Endereço da Empresa não cadastrado',
+                        message:
+                          'Cadastre o endereço da sua empresa nas Configurações da Conta para que a rota e as distâncias usem o ponto de partida exato.',
+                        type: 'warning',
+                        buttons: [
+                          {
+                            text: 'Cadastrar na Conta',
+                            style: 'default',
+                            onPress: () => router.push('/settings'),
+                          },
+                          {
+                            text: 'Calcular Mesmo Assim',
+                            style: 'cancel',
+                            onPress: () => optimizeRouteMutation.mutate(),
+                          },
+                        ],
+                      });
+                      return;
+                    }
+                    optimizeRouteMutation.mutate();
+                  }}
                 >
                   <Sparkles size={16} color="#ffffff" />
                   <Text style={styles.optimizeRouteBtnText}>

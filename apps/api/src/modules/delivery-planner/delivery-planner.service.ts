@@ -521,10 +521,14 @@ export class DeliveryPlannerService {
       }),
     ]);
 
-    // Garantir que todas as entregas tenham distância e sugestão de taxa calculadas
+    // Garantir que todas as entregas tenham distância e sugestão de taxa calculadas com base no endereço da empresa
     const mappedDeliveries = deliveryDocs.map((d) => {
       const item = this.mapDelivery(d);
-      if (item.distanceKm === undefined || item.suggestedDeliveryFeeCents === undefined) {
+      if (
+        item.routeOrder === undefined ||
+        item.distanceKm === undefined ||
+        item.suggestedDeliveryFeeCents === undefined
+      ) {
         const addrText =
           item.address.formattedAddress ||
           this.buildFormattedAddress(item.address) ||
@@ -683,16 +687,6 @@ export class DeliveryPlannerService {
   ): Promise<DailyDeliveryPlan> {
     const companyObjectId = new Types.ObjectId(companyId.toString());
 
-    // Se o usuário informou um endereço de partida (loja), persistir no cadastro da empresa
-    if (input.originAddress && input.originAddress.trim()) {
-      await this.companyModel.findByIdAndUpdate(companyObjectId, {
-        $set: {
-          'address.street': input.originAddress.trim(),
-        },
-      });
-      TenantGuard.invalidateCompanyCache(companyObjectId.toString());
-    }
-
     // Garantir que os pedidos do dia já estejam sincronizados
     await this.getDailyDeliveries(companyId, input.date);
 
@@ -703,8 +697,8 @@ export class DeliveryPlannerService {
       .exec();
 
     const originFormatted =
-      input.originAddress?.trim() ||
       this.buildFormattedAddress(company?.address) ||
+      input.originAddress?.trim() ||
       'Centro, Lisboa';
     const originCoords = await this.geocodeAddress(originFormatted, company?.address);
 

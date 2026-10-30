@@ -89,15 +89,41 @@ export class CompaniesController {
   @Put('current/profile')
   async updateCompanyProfile(
     @CurrentCompany() company: any,
-    @Body() body: { tradeName?: string; phone?: string; address?: any },
+    @Body()
+    body: {
+      tradeName?: string;
+      legalName?: string;
+      taxId?: string;
+      phone?: string;
+      email?: string;
+      address?: {
+        street?: string;
+        number?: string;
+        complement?: string;
+        neighborhood?: string;
+        city?: string;
+        postalCode?: string;
+      };
+    },
   ) {
     const updated = await this.companiesService.updateProfile(company._id, body);
     TenantGuard.invalidateCompanyCache(company._id.toString());
     return {
       id: updated._id.toString(),
       tradeName: updated.tradeName,
+      legalName: updated.legalName,
+      businessType: updated.businessType,
+      taxId: updated.taxId,
+      currency: updated.currency,
+      timezone: updated.timezone,
+      monthlySalesGoalCents: updated.monthlySalesGoalCents,
+      status: updated.status,
+      logoUrl: updated.logoUrl,
       phone: updated.phone,
+      email: updated.email,
       address: updated.address,
+      createdAt: (updated as any).createdAt,
+      updatedAt: (updated as any).updatedAt,
     };
   }
 }
