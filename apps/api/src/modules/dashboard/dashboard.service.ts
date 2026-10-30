@@ -16,42 +16,70 @@ export class DashboardService {
   async getOverview(companyId: string | Types.ObjectId) {
     const companyObjectId = new Types.ObjectId(companyId.toString());
 
-    // 1. Get Company details (currency, tradeName, salesGoal)
-    const company = await this.companyModel.findById(companyObjectId);
-    const monthlySalesGoalCents = company?.monthlySalesGoalCents || 0;
-
-    // 2. Calculate current month sales (start of current month until now)
     const now = new Date();
     const startOfCurrentMonth = new Date(now.getFullYear(), now.getMonth(), 1);
     const startOfLastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const endOfLastMonth = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
 
-    // Sum orders in current month (not canceled)
-    const currentMonthOrders = await this.orderModel.find({
-      companyId: companyObjectId,
-      operationalStatus: { $ne: 'canceled' },
-      createdAt: { $gte: startOfCurrentMonth },
-    }).exec();
+    // Execute all dashboard queries in parallel to minimize latency
+    const [
+      company,
+      currentMonthOrders,
+      lastMonthOrdersCount,
+      cashSummary,
+      urgentOrders,
+      pendingOrdersCount,
+      recentOrders,
+    ] = await Promise.all([
+      this.companyModel.findById(companyObjectId).lean().exec(),
+      this.orderModel
+        .find({
+          companyId: companyObjectId,
+          operationalStatus: { $ne: 'canceled' },
+          createdAt: { $gte: startOfCurrentMonth },
+        })
+        .select('totalAmountCents')
+        .lean()
+        .exec(),
+      this.orderModel.countDocuments({
+        companyId: companyObjectId,
+        operationalStatus: { $ne: 'canceled' },
+        createdAt: { $gte: startOfLastMonth, $lte: endOfLastMonth },
+      }),
+      this.cashflowService.getSummary(companyObjectId),
+      this.orderModel
+        .find({
+          companyId: companyObjectId,
+          operationalStatus: { $in: ['pending', 'in_production'] },
+        })
+        .sort({ deliveryDate: 1 })
+        .limit(5)
+        .lean()
+        .exec(),
+      this.orderModel.countDocuments({
+        companyId: companyObjectId,
+        operationalStatus: { $in: ['pending', 'in_production'] },
+      }),
+      this.orderModel
+        .find({ companyId: companyObjectId })
+        .sort({ createdAt: -1 })
+        .limit(10)
+        .lean()
+        .exec(),
+    ]);
 
+    const monthlySalesGoalCents = company?.monthlySalesGoalCents || 0;
     const currentMonthSoldCents = currentMonthOrders.reduce(
-      (acc, o) => acc + o.totalAmountCents,
+      (acc, o) => acc + (o.totalAmountCents || 0),
       0,
     );
     const currentMonthOrdersCount = currentMonthOrders.length;
 
-    // Calculate progress towards monthly goal
     const progressPercentage =
       monthlySalesGoalCents > 0
         ? Math.min(100, Math.round((currentMonthSoldCents / monthlySalesGoalCents) * 100))
         : 0;
     const remainingCents = Math.max(0, monthlySalesGoalCents - currentMonthSoldCents);
-
-    // Last month orders for comparison
-    const lastMonthOrdersCount = await this.orderModel.countDocuments({
-      companyId: companyObjectId,
-      operationalStatus: { $ne: 'canceled' },
-      createdAt: { $gte: startOfLastMonth, $lte: endOfLastMonth },
-    });
 
     const ordersComparisonPercent =
       lastMonthOrdersCount > 0
@@ -60,31 +88,7 @@ export class DashboardService {
         ? 100
         : 0;
 
-    // 3. Consolidated balance from cashflow
-    const cashSummary = await this.cashflowService.getSummary(companyObjectId);
     const totalBalanceCents = cashSummary.consolidatedBalanceCents;
-
-    // 4. Urgent / Attention orders: pending or in_production, sorted by deliveryDate ascending
-    const urgentOrders = await this.orderModel
-      .find({
-        companyId: companyObjectId,
-        operationalStatus: { $in: ['pending', 'in_production'] },
-      })
-      .sort({ deliveryDate: 1 })
-      .limit(5)
-      .exec();
-
-    const pendingOrdersCount = await this.orderModel.countDocuments({
-      companyId: companyObjectId,
-      operationalStatus: { $in: ['pending', 'in_production'] },
-    });
-
-    // 5. Recent orders: last 10 created
-    const recentOrders = await this.orderModel
-      .find({ companyId: companyObjectId })
-      .sort({ createdAt: -1 })
-      .limit(10)
-      .exec();
 
     return {
       company: {

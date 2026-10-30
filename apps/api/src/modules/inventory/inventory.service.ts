@@ -431,18 +431,24 @@ export class InventoryService {
   async getShoppingList(companyId: string | Types.ObjectId): Promise<ShoppingListResponse> {
     const companyObjectId = new Types.ObjectId(companyId.toString());
 
-    // 1. Insumos com estoque baixo (menor ou igual ao mínimo)
-    const lowStockDocs = await this.itemModel.find({
-      companyId: companyObjectId,
-      deletedAt: { $exists: false },
-      $expr: { $lte: ['$currentStock', '$minStock'] },
-    }).sort({ currentStock: 1 }).exec();
-
-    // 2. Itens persistidos na lista de compras (manuais ou com status personalizado)
-    const customDocs = await this.shoppingListModel.find({
-      companyId: companyObjectId,
-      deletedAt: { $exists: false },
-    }).sort({ createdAt: -1 }).exec();
+    // 1 & 2. Buscar estoque baixo e lista customizada em paralelo
+    const [lowStockDocs, customDocs] = await Promise.all([
+      this.itemModel
+        .find({
+          companyId: companyObjectId,
+          deletedAt: { $exists: false },
+          $expr: { $lte: ['$currentStock', '$minStock'] },
+        })
+        .sort({ currentStock: 1 })
+        .exec(),
+      this.shoppingListModel
+        .find({
+          companyId: companyObjectId,
+          deletedAt: { $exists: false },
+        })
+        .sort({ createdAt: -1 })
+        .exec(),
+    ]);
 
     const customByInventoryId = new Map<string, ShoppingListItemDocument>();
     const standaloneCustomItems: ShoppingListItemDocument[] = [];
@@ -491,15 +497,22 @@ export class InventoryService {
     }
 
     // Processar itens de estoque adicionados manualmente que NÃO estão com estoque baixo
-    for (const [invId, customDoc] of customByInventoryId.entries()) {
-      if (!processedInventoryIds.has(invId)) {
-        processedInventoryIds.add(invId);
-        const invDoc = await this.itemModel.findOne({
-          _id: new Types.ObjectId(invId),
+    const missingInvIds = Array.from(customByInventoryId.keys()).filter(
+      (invId) => !processedInventoryIds.has(invId),
+    );
+    if (missingInvIds.length > 0) {
+      const extraInvDocs = await this.itemModel
+        .find({
+          _id: { $in: missingInvIds.map((id) => new Types.ObjectId(id)) },
           deletedAt: { $exists: false },
-        });
+        })
+        .exec();
 
-        if (invDoc) {
+      for (const invDoc of extraInvDocs) {
+        const invId = invDoc._id.toString();
+        processedInventoryIds.add(invId);
+        const customDoc = customByInventoryId.get(invId);
+        if (customDoc) {
           const item = this.mapItem(invDoc);
           items.push({
             id: customDoc._id.toString(),

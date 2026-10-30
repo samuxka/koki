@@ -333,6 +333,9 @@ export const createDeliveryItemSchema = z.object({
   shift: z.enum(['morning', 'afternoon', 'evening', 'anytime']).default('morning'),
   scheduledTime: z.string().optional(),
   deliveryFeeCents: z.number().nonnegative().default(0),
+  suggestedDeliveryFeeCents: z.number().nonnegative().optional(),
+  distanceKm: z.number().nonnegative().optional(),
+  routeOrder: z.number().int().nonnegative().optional(),
   remainingAmountCents: z.number().nonnegative().default(0),
   financialStatus: z.enum(['unpaid', 'partial', 'paid']).default('unpaid'),
   status: z.enum(['pending', 'out_for_delivery', 'delivered', 'failed']).default('pending'),
@@ -353,6 +356,24 @@ export const updateDeliveryStatusSchema = z.object({
   notes: z.string().optional(),
 });
 export type UpdateDeliveryStatusInput = z.infer<typeof updateDeliveryStatusSchema>;
+
+export const optimizeDeliveryRouteSchema = z.object({
+  date: z.string().min(10, 'A data é obrigatória (formato AAAA-MM-DD)'),
+  shift: z.enum(['all', 'morning', 'afternoon', 'evening', 'anytime']).optional().default('all'),
+  originAddress: z.string().optional(),
+  applySuggestedFees: z.boolean().optional().default(false),
+  baseFeeCents: z.number().nonnegative().optional(),
+  perKmCents: z.number().nonnegative().optional(),
+});
+export type OptimizeDeliveryRouteInput = z.infer<typeof optimizeDeliveryRouteSchema>;
+
+export const estimateDeliveryFeeSchema = z.object({
+  originAddress: z.string().optional(),
+  destinationAddress: deliveryAddressSchema,
+  baseFeeCents: z.number().nonnegative().optional(),
+  perKmCents: z.number().nonnegative().optional(),
+});
+export type EstimateDeliveryFeeInput = z.infer<typeof estimateDeliveryFeeSchema>;
 
 // Coupons Validation
 export const createCouponSchema = z.object({

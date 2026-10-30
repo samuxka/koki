@@ -12,6 +12,9 @@ import {
 
 @Injectable()
 export class EntitlementsService {
+  private entitlementsCache = new Map<string, { data: EntitlementsResponse; expiresAt: number }>();
+  private readonly CACHE_TTL_MS = 30_000;
+
   constructor(
     @InjectModel(Subscription.name)
     private subscriptionModel: Model<SubscriptionDocument>,
@@ -41,6 +44,13 @@ export class EntitlementsService {
   }
 
   async getEntitlements(companyId: string | Types.ObjectId): Promise<EntitlementsResponse> {
+    const cacheKey = companyId.toString();
+    const now = Date.now();
+    const cached = this.entitlementsCache.get(cacheKey);
+    if (cached && cached.expiresAt > now) {
+      return cached.data;
+    }
+
     const sub = await this.getCompanySubscription(companyId);
     
     // Determine active tier
@@ -91,7 +101,7 @@ export class EntitlementsService {
         : []),
     ];
 
-    return {
+    const result: EntitlementsResponse = {
       planCode: sub.planCode,
       tier,
       status: sub.status,
@@ -106,6 +116,13 @@ export class EntitlementsService {
       canCreateRecipe: true,
       accessibleFeatures,
     };
+
+    this.entitlementsCache.set(cacheKey, {
+      data: result,
+      expiresAt: now + this.CACHE_TTL_MS,
+    });
+
+    return result;
   }
 
   async verifyFeatureAccess(companyId: string | Types.ObjectId, featureKey: string): Promise<void> {
@@ -125,12 +142,14 @@ export class EntitlementsService {
     tier: SubscriptionTier,
     interval: 'monthly' | 'yearly' = 'monthly',
   ): Promise<EntitlementsResponse> {
+    this.entitlementsCache.delete(companyId.toString());
     if (tier === 'free') {
-      const sub = await this.subscriptionModel.findOneAndUpdate(
+      await this.subscriptionModel.findOneAndUpdate(
         { companyId: new Types.ObjectId(companyId.toString()) },
         { planCode: 'free', status: 'active' },
         { new: true, upsert: true },
       );
+      this.entitlementsCache.delete(companyId.toString());
       return this.getEntitlements(companyId);
     }
 
@@ -149,6 +168,7 @@ export class EntitlementsService {
       { new: true, upsert: true },
     );
 
+    this.entitlementsCache.delete(companyId.toString());
     return this.getEntitlements(companyId);
   }
 }

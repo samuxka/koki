@@ -29,10 +29,19 @@ const API_BASE_URL = getApiBaseUrl();
 class ApiClient {
   private isRefreshing = false;
   private refreshSubscribers: ((token: string) => void)[] = [];
+  private inflightGetRequests = new Map<string, Promise<any>>();
 
   private async getHeaders(): Promise<HeadersInit> {
-    const token = await storage.getItem('koki_access_token');
-    const companyId = await storage.getItem('koki_current_company_id');
+    const syncToken = storage.getItemSync('koki_access_token');
+    const syncCompanyId = storage.getItemSync('koki_current_company_id');
+
+    const [token, companyId] =
+      syncToken !== undefined && syncCompanyId !== undefined
+        ? [syncToken, syncCompanyId]
+        : await Promise.all([
+            storage.getItem('koki_access_token'),
+            storage.getItem('koki_current_company_id'),
+          ]);
 
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -54,34 +63,68 @@ class ApiClient {
     options: RequestInit = {},
   ): Promise<T> {
     const url = endpoint.startsWith('http') ? endpoint : `${API_BASE_URL}${endpoint}`;
-    const headers = await this.getHeaders();
+    const method = (options.method || 'GET').toUpperCase();
 
-    const response = await fetch(url, {
-      ...options,
-      headers: {
-        ...headers,
-        ...(options.headers || {}),
-      },
-    });
-
-    // Handle 401 Unauthorized for Refresh Token rotation
-    if (response.status === 401 && !endpoint.includes('/auth/')) {
-      const refreshedToken = await this.handleTokenRefresh();
-      if (refreshedToken) {
-        // Retry with refreshed token
-        const retryHeaders = await this.getHeaders();
-        const retryResponse = await fetch(url, {
-          ...options,
-          headers: {
-            ...retryHeaders,
-            ...(options.headers || {}),
-          },
-        });
-        return this.parseResponse<T>(retryResponse);
+    // Deduplicate concurrent identical GET requests
+    if (method === 'GET') {
+      const existing = this.inflightGetRequests.get(url);
+      if (existing) {
+        return existing as Promise<T>;
       }
+      const promise = this.executeRequest<T>(endpoint, url, options).finally(() => {
+        this.inflightGetRequests.delete(url);
+      });
+      this.inflightGetRequests.set(url, promise);
+      return promise;
     }
 
-    return this.parseResponse<T>(response);
+    return this.executeRequest<T>(endpoint, url, options);
+  }
+
+  private async executeRequest<T>(
+    endpoint: string,
+    url: string,
+    options: RequestInit = {},
+  ): Promise<T> {
+    const headers = await this.getHeaders();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: options.signal || controller.signal,
+        headers: {
+          ...headers,
+          ...(options.headers || {}),
+        },
+      });
+      clearTimeout(timeoutId);
+
+      // Handle 401 Unauthorized for Refresh Token rotation
+      if (response.status === 401 && !endpoint.includes('/auth/')) {
+        const refreshedToken = await this.handleTokenRefresh();
+        if (refreshedToken) {
+          const retryHeaders = await this.getHeaders();
+          const retryResponse = await fetch(url, {
+            ...options,
+            headers: {
+              ...retryHeaders,
+              ...(options.headers || {}),
+            },
+          });
+          return this.parseResponse<T>(retryResponse);
+        }
+      }
+
+      return this.parseResponse<T>(response);
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (err?.name === 'AbortError') {
+        throw new Error('Tempo limite de conexão excedido. Verifique sua rede.');
+      }
+      throw err;
+    }
   }
 
   private async parseResponse<T>(response: Response): Promise<T> {
@@ -126,8 +169,10 @@ class ApiClient {
       });
 
       if (!res.ok) {
-        await storage.removeItem('koki_access_token');
-        await storage.removeItem('koki_refresh_token');
+        await Promise.all([
+          storage.removeItem('koki_access_token'),
+          storage.removeItem('koki_refresh_token'),
+        ]);
         return null;
       }
 

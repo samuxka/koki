@@ -19,6 +19,8 @@ import {
   CreateDeliveryItemInput,
   UpdateDeliveryItemInput,
   UpdateDeliveryStatusInput,
+  OptimizeDeliveryRouteInput,
+  EstimateDeliveryFeeInput,
 } from '@koki/validation';
 
 @ApiTags('delivery-planner')
@@ -35,6 +37,33 @@ export class DeliveryPlannerController {
     @Query('date') date?: string,
   ) {
     return this.deliveryPlannerService.getDailyDeliveries(company._id, date);
+  }
+
+  @ApiOperation({ summary: 'Otimizar rota eficiente baseada nos endereços dos clientes' })
+  @Post('optimize-route')
+  async optimizeRoute(
+    @CurrentCompany() company: any,
+    @Body() input: OptimizeDeliveryRouteInput,
+  ) {
+    return this.deliveryPlannerService.optimizeRoute(company._id, input);
+  }
+
+  @ApiOperation({ summary: 'Estimar distância e sugerir taxa de entrega por endereço' })
+  @Post('estimate-fee')
+  async estimateFee(
+    @CurrentCompany() company: any,
+    @Body() input: EstimateDeliveryFeeInput,
+  ) {
+    return this.deliveryPlannerService.estimateDeliveryFee(company._id, input);
+  }
+
+  @ApiOperation({ summary: 'Aplicar taxa de entrega sugerida por distância na parada e pedido' })
+  @Patch(':id/apply-fee')
+  async applySuggestedFee(
+    @CurrentCompany() company: any,
+    @Param('id') id: string,
+  ) {
+    return this.deliveryPlannerService.applySuggestedFee(company._id, id);
   }
 
   @ApiOperation({ summary: 'Criar entrega ou parada de rota' })

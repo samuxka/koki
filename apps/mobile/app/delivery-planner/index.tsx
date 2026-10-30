@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -30,13 +30,14 @@ import {
   RotateCcw,
   Plus,
   Share2,
-  DollarSign,
   AlertTriangle,
   User,
   X,
   Check,
-  Search,
   Package,
+  Sparkles,
+  Map,
+  Route,
 } from 'lucide-react-native';
 import { api } from '../../src/services/api';
 import { colors, spacing, typography, borderRadius } from '../../src/theme';
@@ -46,9 +47,9 @@ import {
   DeliveryItem,
   DeliveryShift,
   DeliveryStatus,
+  DeliveryFeeEstimateResult,
 } from '@koki/types';
 import {
-  Badge,
   LoadingState,
   EmptyState,
   ProgressBar,
@@ -123,6 +124,11 @@ export default function DeliveryPlannerScreen() {
   const [selectedDate, setSelectedDate] = useState<string>(todayStr);
   const [selectedShift, setSelectedShift] = useState<ShiftFilter>('all');
 
+  // Route Optimization & Origin State
+  const [originAddressInput, setOriginAddressInput] = useState<string>('');
+  const [isEditingOrigin, setIsEditingOrigin] = useState<boolean>(false);
+  const [applySuggestedFeesOnOptimize, setApplySuggestedFeesOnOptimize] = useState<boolean>(true);
+
   // Modal: Nova Entrega Manual
   const [newDeliveryModalVisible, setNewDeliveryModalVisible] = useState<boolean>(false);
   const [customerName, setCustomerName] = useState<string>('');
@@ -139,6 +145,8 @@ export default function DeliveryPlannerScreen() {
   const [driverName, setDriverName] = useState<string>('');
   const [deliveryNotes, setDeliveryNotes] = useState<string>('');
   const [itemsSummary, setItemsSummary] = useState<string>('');
+  const [manualFeeEstimate, setManualFeeEstimate] = useState<DeliveryFeeEstimateResult | null>(null);
+  const [isEstimatingManualFee, setIsEstimatingManualFee] = useState<boolean>(false);
 
   // Modal: Atribuir Motorista Rápido
   const [driverModalVisible, setDriverModalVisible] = useState<boolean>(false);
@@ -156,7 +164,73 @@ export default function DeliveryPlannerScreen() {
     queryFn: () => api.get<DailyDeliveryPlan>(`/delivery-planner/daily?date=${selectedDate}`),
   });
 
+  useEffect(() => {
+    if (plan?.routeSummary?.originAddress && !originAddressInput) {
+      setOriginAddressInput(plan.routeSummary.originAddress);
+    }
+  }, [plan?.routeSummary?.originAddress]);
+
   // 2. Mutations
+  const optimizeRouteMutation = useMutation({
+    mutationFn: () =>
+      api.post<DailyDeliveryPlan>('/delivery-planner/optimize-route', {
+        date: selectedDate,
+        shift: selectedShift,
+        originAddress: originAddressInput.trim() || undefined,
+        applySuggestedFees: applySuggestedFeesOnOptimize,
+      }),
+    onSuccess: (updatedPlan) => {
+      queryClient.setQueryData(['delivery-daily-plan', selectedDate], updatedPlan);
+      queryClient.invalidateQueries({ queryKey: ['orders-list'] });
+      setIsEditingOrigin(false);
+      showAlert({
+        title: 'Rota Eficiente Criada! 🗺️',
+        message: `As paradas foram ordenadas pelo melhor trajeto (${
+          updatedPlan.routeSummary?.totalDistanceKm || 0
+        } km total • ~${updatedPlan.routeSummary?.estimatedDurationMinutes || 0} min)${
+          applySuggestedFeesOnOptimize
+            ? ' e as taxas sugeridas por distância foram aplicadas.'
+            : '.'
+        }`,
+        type: 'success',
+        buttons: [{ text: 'Excelente!', style: 'default' }],
+      });
+    },
+    onError: (err: any) => {
+      showAlert({
+        title: 'Erro ao otimizar rota',
+        message: err.message || 'Não foi possível calcular a rota eficiente.',
+        type: 'danger',
+        buttons: [{ text: 'OK', style: 'default' }],
+      });
+    },
+  });
+
+  const applyStopSuggestedFeeMutation = useMutation({
+    mutationFn: ({ id, feeCents }: { id: string; feeCents: number }) =>
+      api.patch<DeliveryItem>(`/delivery-planner/${id}/apply-fee`, {
+        deliveryFeeCents: feeCents,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['delivery-daily-plan', selectedDate] });
+      queryClient.invalidateQueries({ queryKey: ['orders-list'] });
+      showAlert({
+        title: 'Taxa Aplicada!',
+        message: 'A taxa sugerida pela distância foi aplicada a esta entrega.',
+        type: 'success',
+        buttons: [{ text: 'OK', style: 'default' }],
+      });
+    },
+    onError: (err: any) => {
+      showAlert({
+        title: 'Erro ao aplicar taxa',
+        message: err.message || 'Não foi possível atualizar a taxa da entrega.',
+        type: 'danger',
+        buttons: [{ text: 'OK', style: 'default' }],
+      });
+    },
+  });
+
   const updateStatusMutation = useMutation({
     mutationFn: ({ id, status, notes }: { id: string; status: DeliveryStatus; notes?: string }) =>
       api.patch<DeliveryItem>(`/delivery-planner/${id}/status`, { status, notes }),
@@ -266,6 +340,44 @@ export default function DeliveryPlannerScreen() {
     setDriverName('');
     setDeliveryNotes('');
     setItemsSummary('');
+    setManualFeeEstimate(null);
+  };
+
+  const handleEstimateManualDeliveryFee = async () => {
+    if (!street.trim() && !postalCode.trim() && !city.trim()) {
+      showAlert({
+        title: 'Informe o Endereço',
+        message: 'Preencha pelo menos a rua, código postal ou cidade para calcular a distância e sugerir a taxa.',
+        type: 'warning',
+        buttons: [{ text: 'OK', style: 'default' }],
+      });
+      return;
+    }
+
+    try {
+      setIsEstimatingManualFee(true);
+      const res = await api.post<DeliveryFeeEstimateResult>('/delivery-planner/estimate-fee', {
+        originAddress: originAddressInput.trim() || undefined,
+        destinationAddress: {
+          street: street.trim() || undefined,
+          number: number.trim() || undefined,
+          neighborhood: neighborhood.trim() || undefined,
+          city: city.trim() || undefined,
+          postalCode: postalCode.trim() || undefined,
+        },
+      });
+      setManualFeeEstimate(res);
+      setDeliveryFeeCents((res.suggestedFeeCents / 100).toFixed(2));
+    } catch (e: any) {
+      showAlert({
+        title: 'Erro ao estimar taxa',
+        message: e.message || 'Não foi possível calcular a distância.',
+        type: 'danger',
+        buttons: [{ text: 'OK', style: 'default' }],
+      });
+    } finally {
+      setIsEstimatingManualFee(false);
+    }
   };
 
   const handleCreateDeliverySubmit = () => {
@@ -292,8 +404,10 @@ export default function DeliveryPlannerScreen() {
       },
       shift,
       scheduledTime: scheduledTime.trim() || undefined,
-      deliveryFeeCents: Math.round((parseFloat(deliveryFeeCents) || 0) * 100),
-      remainingAmountCents: Math.round((parseFloat(remainingAmountCents) || 0) * 100),
+      deliveryFeeCents: Math.round((parseFloat(deliveryFeeCents.replace(',', '.')) || 0) * 100),
+      suggestedDeliveryFeeCents: manualFeeEstimate?.suggestedFeeCents,
+      distanceKm: manualFeeEstimate?.distanceKm,
+      remainingAmountCents: Math.round((parseFloat(remainingAmountCents.replace(',', '.')) || 0) * 100),
       driverName: driverName.trim() || undefined,
       notes: deliveryNotes.trim() || undefined,
       itemsSummary: itemsSummary.trim() || undefined,
@@ -317,7 +431,82 @@ export default function DeliveryPlannerScreen() {
     });
   };
 
-  // External Navigation & Contacts
+  // Filter deliveries by shift
+  const filteredDeliveries = useMemo(() => {
+    if (!plan) return [];
+    if (selectedShift === 'all') return plan.deliveries;
+    return plan.deliveries.filter((d) => d.shift === selectedShift);
+  }, [plan, selectedShift]);
+
+  // Open Full Multi-Stop Route in Google Maps
+  const handleOpenFullRouteMap = () => {
+    if (filteredDeliveries.length === 0) {
+      showAlert({
+        title: 'Sem Paradas na Rota',
+        message: 'Não há entregas no turno selecionado para abrir no mapa.',
+        type: 'info',
+        buttons: [{ text: 'OK', style: 'default' }],
+      });
+      return;
+    }
+
+    // Prefer non-delivered stops in routeOrder sequence; fallback to all stops in current filter
+    const activeStops = filteredDeliveries.filter(
+      (d) => d.status !== 'delivered' && d.status !== 'failed',
+    );
+    const stopsToNavigate = activeStops.length > 0 ? activeStops : filteredDeliveries;
+
+    const stopAddresses = stopsToNavigate
+      .map(
+        (d) =>
+          d.address.formattedAddress ||
+          [d.address.street, d.address.number, d.address.neighborhood, d.address.city, d.address.postalCode]
+            .filter(Boolean)
+            .join(', '),
+      )
+      .filter((addr) => addr && addr.trim() !== '' && addr !== 'Endereço não informado');
+
+    if (stopAddresses.length === 0) {
+      showAlert({
+        title: 'Endereços não informados',
+        message: 'Cadastre o endereço dos clientes nas entregas para traçar a rota no mapa.',
+        type: 'warning',
+        buttons: [{ text: 'OK', style: 'default' }],
+      });
+      return;
+    }
+
+    const origin =
+      originAddressInput.trim() ||
+      plan?.routeSummary?.originAddress ||
+      'Lisboa, Portugal';
+    const destination = stopAddresses[stopAddresses.length - 1];
+    const waypoints = stopAddresses.slice(0, -1);
+
+    const url =
+      selectedShift === 'all' &&
+      !originAddressInput.trim() &&
+      plan?.routeSummary?.googleMapsRouteUrl
+        ? plan.routeSummary.googleMapsRouteUrl
+        : `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(
+            origin,
+          )}&destination=${encodeURIComponent(destination)}${
+            waypoints.length > 0
+              ? `&waypoints=${encodeURIComponent(waypoints.join('|'))}`
+              : ''
+          }&travelmode=driving`;
+
+    Linking.openURL(url).catch(() => {
+      showAlert({
+        title: 'Não foi possível abrir o mapa',
+        message: 'Verifique se há um navegador ou aplicativo Google Maps instalado.',
+        type: 'warning',
+        buttons: [{ text: 'OK', style: 'default' }],
+      });
+    });
+  };
+
+  // External Navigation & Contacts per Stop
   const openGoogleMaps = (item: DeliveryItem) => {
     const query = encodeURIComponent(
       item.address.formattedAddress ||
@@ -411,12 +600,21 @@ export default function DeliveryPlannerScreen() {
 
     text += `📊 *RESUMO DA ROTA*\n`;
     text += `• Total de entregas: ${plan.totalDeliveriesCount}\n`;
+    if (plan.routeSummary) {
+      text += `• Distância total estimada: ${plan.routeSummary.totalDistanceKm} km (~${plan.routeSummary.estimatedDurationMinutes} min)\n`;
+    }
     text += `• Concluídas: ${plan.completedDeliveriesCount}/${plan.totalDeliveriesCount}\n`;
-    text += `• Total a cobrar na entrega: ${formatCurrency(plan.totalAmountToCollectCents)}\n\n`;
+    text += `• Total a cobrar na entrega: ${formatCurrency(plan.totalAmountToCollectCents)}\n`;
+    if (plan.routeSummary?.googleMapsRouteUrl) {
+      text += `• 🗺️ Mapa da Rota Completa: ${plan.routeSummary.googleMapsRouteUrl}\n`;
+    }
+    text += `\n`;
 
     plan.deliveries.forEach((d, idx) => {
       const statusIcon = d.status === 'delivered' ? '✅' : d.status === 'out_for_delivery' ? '🛵' : '⚪';
-      text += `📍 *PARADA #${idx + 1}* - ${statusIcon} ${d.customerName}\n`;
+      text += `📍 *PARADA #${idx + 1}* - ${statusIcon} ${d.customerName}${
+        d.distanceKm ? ` (${d.distanceKm} km)` : ''
+      }\n`;
       if (d.orderNumber) text += `   Pedido: #${d.orderNumber}\n`;
       if (d.scheduledTime) text += `   Horário previsto: ${d.scheduledTime} (${SHIFT_CONFIG[d.shift].label})\n`;
       if (d.address.formattedAddress) text += `   Endereço: ${d.address.formattedAddress}\n`;
@@ -443,13 +641,6 @@ export default function DeliveryPlannerScreen() {
     } catch {}
   };
 
-  // Filter deliveries by shift
-  const filteredDeliveries = useMemo(() => {
-    if (!plan) return [];
-    if (selectedShift === 'all') return plan.deliveries;
-    return plan.deliveries.filter((d) => d.shift === selectedShift);
-  }, [plan, selectedShift]);
-
   const progressPercentage = useMemo(() => {
     if (!plan || plan.totalDeliveriesCount === 0) return 0;
     return Math.round((plan.completedDeliveriesCount / plan.totalDeliveriesCount) * 100);
@@ -469,7 +660,7 @@ export default function DeliveryPlannerScreen() {
           </TouchableOpacity>
           <View>
             <Text style={styles.headerTitle}>Planejador de Entregas</Text>
-            <Text style={styles.headerSubtitle}>Rotas, horários & endereços do dia</Text>
+            <Text style={styles.headerSubtitle}>Rotas inteligentes, taxas & mapa do dia</Text>
           </View>
         </View>
 
@@ -596,6 +787,122 @@ export default function DeliveryPlannerScreen() {
               </View>
             </View>
 
+            {/* CARD DE ROTA EFICIENTE, SUGESTÃO DE TAXA POR DISTÂNCIA & MAPA */}
+            <View style={styles.routeOptimizerCard}>
+              <View style={styles.routeOptimizerHeader}>
+                <View style={styles.routeHeaderTitleRow}>
+                  <View style={styles.routeIconBadge}>
+                    <Route size={18} color={colors.primary} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.routeOptimizerTitle}>Rota Eficiente & Taxas</Text>
+                    <Text style={styles.routeOptimizerSubtitle} numberOfLines={1}>
+                      Partida: {originAddressInput || plan?.routeSummary?.originAddress || 'Lisboa, Portugal'}
+                    </Text>
+                  </View>
+                </View>
+                <TouchableOpacity
+                  style={styles.editOriginBtn}
+                  onPress={() => setIsEditingOrigin(!isEditingOrigin)}
+                >
+                  <Text style={styles.editOriginBtnText}>
+                    {isEditingOrigin ? 'Fechar' : 'Alterar Partida'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              {isEditingOrigin && (
+                <View style={styles.originEditorBox}>
+                  <Text style={styles.originEditorLabel}>
+                    Endereço de Partida (Confeitaria / Loja):
+                  </Text>
+                  <TextInput
+                    style={styles.originTextInput}
+                    placeholder="Ex: Rua Augusta 100, 1100-053 Lisboa"
+                    placeholderTextColor={colors.textMuted}
+                    value={originAddressInput}
+                    onChangeText={setOriginAddressInput}
+                  />
+                </View>
+              )}
+
+              {/* Métricas de Distância, Tempo e Sugestão de Taxas */}
+              <View style={styles.routeMetricsRow}>
+                <View style={styles.routeMetricPill}>
+                  <Text style={styles.routeMetricLabel}>Distância Total</Text>
+                  <Text style={styles.routeMetricValue}>
+                    {plan?.routeSummary?.totalDistanceKm ?? 0} km
+                  </Text>
+                </View>
+                <View style={styles.routeMetricPill}>
+                  <Text style={styles.routeMetricLabel}>Tempo Estimado</Text>
+                  <Text style={styles.routeMetricValue}>
+                    ~{plan?.routeSummary?.estimatedDurationMinutes ?? 0} min
+                  </Text>
+                </View>
+                <View style={styles.routeMetricPill}>
+                  <Text style={styles.routeMetricLabel}>Taxas Sugeridas</Text>
+                  <Text style={[styles.routeMetricValue, { color: colors.primary }]}>
+                    {formatCurrency(plan?.routeSummary?.totalSuggestedFeeCents || 0)}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Opção de aplicar taxas sugeridas automaticamente ao otimizar */}
+              <TouchableOpacity
+                activeOpacity={0.8}
+                onPress={() => setApplySuggestedFeesOnOptimize(!applySuggestedFeesOnOptimize)}
+                style={styles.applyFeesToggleRow}
+              >
+                <View
+                  style={[
+                    styles.miniCheckbox,
+                    applySuggestedFeesOnOptimize && styles.miniCheckboxChecked,
+                  ]}
+                >
+                  {applySuggestedFeesOnOptimize && <Check size={12} color="#ffffff" />}
+                </View>
+                <Text style={styles.applyFeesToggleText}>
+                  Atualizar taxas das entregas com o valor sugerido pela distância (km)
+                </Text>
+              </TouchableOpacity>
+
+              {/* Botões Principais: Criar Rota Eficiente + Abrir Mapa com a Rota */}
+              <View style={styles.routeMainActionsRow}>
+                <TouchableOpacity
+                  style={[
+                    styles.optimizeRouteBtn,
+                    (!plan || plan.deliveries.length === 0) && styles.btnDisabled,
+                  ]}
+                  activeOpacity={0.85}
+                  disabled={
+                    optimizeRouteMutation.isPending || !plan || plan.deliveries.length === 0
+                  }
+                  onPress={() => optimizeRouteMutation.mutate()}
+                >
+                  <Sparkles size={16} color="#ffffff" />
+                  <Text style={styles.optimizeRouteBtnText}>
+                    {optimizeRouteMutation.isPending
+                      ? 'Calculando Rota...'
+                      : 'Criar Rota Eficiente'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.openRouteMapBtn,
+                    filteredDeliveries.length === 0 && styles.btnDisabled,
+                  ]}
+                  activeOpacity={0.85}
+                  disabled={filteredDeliveries.length === 0}
+                  onPress={handleOpenFullRouteMap}
+                >
+                  <Map size={16} color={colors.primaryDark} />
+                  <Text style={styles.openRouteMapBtnText}>Abrir Mapa com a Rota</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+
             {/* Ação: Agendar Nova Parada / Entrega Manual */}
             <View style={styles.actionRow}>
               <TouchableOpacity
@@ -661,6 +968,9 @@ export default function DeliveryPlannerScreen() {
                 const isFailed = delivery.status === 'failed';
                 const hasPendingPayment =
                   delivery.financialStatus !== 'paid' && delivery.remainingAmountCents > 0;
+                const suggestedCents = delivery.suggestedDeliveryFeeCents || 0;
+                const showSuggestedFeeAction =
+                  suggestedCents > 0 && suggestedCents !== delivery.deliveryFeeCents;
 
                 return (
                   <View
@@ -670,7 +980,9 @@ export default function DeliveryPlannerScreen() {
                     {/* Header do Card */}
                     <View style={styles.cardHeaderRow}>
                       <View style={styles.stopSequenceBadge}>
-                        <Text style={styles.stopSequenceText}>#{index + 1}</Text>
+                        <Text style={styles.stopSequenceText}>
+                          #{delivery.routeOrder || index + 1}
+                        </Text>
                       </View>
 
                       <View style={styles.cardTitleCol}>
@@ -694,6 +1006,13 @@ export default function DeliveryPlannerScreen() {
                               {shiftCfg.icon} {shiftCfg.label}
                             </Text>
                           </View>
+
+                          {delivery.distanceKm !== undefined && delivery.distanceKm > 0 ? (
+                            <View style={styles.distanceTag}>
+                              <Navigation size={10} color={colors.primary} />
+                              <Text style={styles.distanceTagText}>{delivery.distanceKm} km</Text>
+                            </View>
+                          ) : null}
 
                           {delivery.scheduledTime ? (
                             <View style={styles.timeTag}>
@@ -747,6 +1066,38 @@ export default function DeliveryPlannerScreen() {
                       </Text>
                     </View>
 
+                    {/* Sugestão de Taxa Baseada na Distância */}
+                    {suggestedCents > 0 && (
+                      <View style={styles.stopSuggestedFeeBox}>
+                        <View style={styles.stopSuggestedFeeLeft}>
+                          <Sparkles size={13} color={colors.primary} />
+                          <Text style={styles.stopSuggestedFeeText}>
+                            Taxa sugerida ({delivery.distanceKm ?? 0} km):{' '}
+                            <Text style={{ fontWeight: '800', color: colors.primary }}>
+                              {formatCurrency(suggestedCents)}
+                            </Text>
+                          </Text>
+                        </View>
+
+                        {showSuggestedFeeAction ? (
+                          <TouchableOpacity
+                            style={styles.applyStopFeeBtn}
+                            onPress={() =>
+                              applyStopSuggestedFeeMutation.mutate({
+                                id: delivery.id,
+                                feeCents: suggestedCents,
+                              })
+                            }
+                            disabled={applyStopSuggestedFeeMutation.isPending}
+                          >
+                            <Text style={styles.applyStopFeeBtnText}>Aplicar Taxa</Text>
+                          </TouchableOpacity>
+                        ) : (
+                          <Text style={styles.appliedFeeCheckText}>Taxa aplicada ✓</Text>
+                        )}
+                      </View>
+                    )}
+
                     {/* Itens do Pedido */}
                     {delivery.itemsSummary ? (
                       <View style={styles.itemsSummaryBox}>
@@ -763,7 +1114,10 @@ export default function DeliveryPlannerScreen() {
                         <View style={styles.alertCollectBox}>
                           <AlertTriangle size={14} color={colors.danger} />
                           <Text style={styles.alertCollectText}>
-                            Cobrar na entrega: <Text style={styles.alertCollectBold}>{formatCurrency(delivery.remainingAmountCents)}</Text>
+                            Cobrar na entrega:{' '}
+                            <Text style={styles.alertCollectBold}>
+                              {formatCurrency(delivery.remainingAmountCents)}
+                            </Text>
                           </Text>
                         </View>
                       ) : (
@@ -773,11 +1127,9 @@ export default function DeliveryPlannerScreen() {
                         </View>
                       )}
 
-                      {delivery.deliveryFeeCents > 0 && (
-                        <Text style={styles.feeText}>
-                          Taxa: {formatCurrency(delivery.deliveryFeeCents)}
-                        </Text>
-                      )}
+                      <Text style={styles.feeText}>
+                        Taxa atual: {formatCurrency(delivery.deliveryFeeCents || 0)}
+                      </Text>
                     </View>
 
                     {/* Entregador vinculado */}
@@ -931,7 +1283,7 @@ export default function DeliveryPlannerScreen() {
               </TouchableOpacity>
             </View>
 
-            <ScrollView style={styles.modalBody}>
+            <ScrollView style={styles.modalBody} keyboardShouldPersistTaps="handled">
               {/* Destinatário */}
               <Text style={styles.inputLabel}>Nome do Destinatário *</Text>
               <TextInput
@@ -1010,6 +1362,31 @@ export default function DeliveryPlannerScreen() {
                   />
                 </View>
               </View>
+
+              {/* Botão para calcular distância e sugerir taxa */}
+              <TouchableOpacity
+                style={styles.estimateManualFeeBtn}
+                onPress={handleEstimateManualDeliveryFee}
+                disabled={isEstimatingManualFee}
+              >
+                <Sparkles size={15} color={colors.primary} />
+                <Text style={styles.estimateManualFeeBtnText}>
+                  {isEstimatingManualFee
+                    ? 'Calculando distância e taxa...'
+                    : 'Calcular Distância e Sugerir Taxa'}
+                </Text>
+              </TouchableOpacity>
+
+              {manualFeeEstimate && (
+                <View style={styles.manualFeeEstimateBanner}>
+                  <Text style={styles.manualFeeEstimateText}>
+                    📍 Distância estimada: <Text style={{ fontWeight: '800' }}>{manualFeeEstimate.distanceKm} km</Text> (~{manualFeeEstimate.estimatedDurationMinutes} min) • Taxa sugerida:{' '}
+                    <Text style={{ fontWeight: '800', color: colors.primary }}>
+                      {formatCurrency(manualFeeEstimate.suggestedFeeCents)}
+                    </Text>
+                  </Text>
+                </View>
+              )}
 
               {/* Turno e Horário */}
               <Text style={styles.inputLabel}>Turno da Rota</Text>
@@ -1331,6 +1708,171 @@ const styles = StyleSheet.create({
   progressContainer: {
     marginTop: spacing.xs,
   },
+  routeOptimizerCard: {
+    backgroundColor: colors.cardBackground,
+    borderRadius: borderRadius.lg,
+    padding: spacing.md,
+    borderWidth: 1.5,
+    borderColor: `${colors.primary}45`,
+    marginBottom: spacing.md,
+  },
+  routeOptimizerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
+  routeHeaderTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    flex: 1,
+  },
+  routeIconBadge: {
+    width: 34,
+    height: 34,
+    borderRadius: borderRadius.md,
+    backgroundColor: `${colors.goldenBeige}40`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  routeOptimizerTitle: {
+    fontSize: typography.sizes.md,
+    fontWeight: '800',
+    color: colors.primaryDark,
+  },
+  routeOptimizerSubtitle: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
+  editOriginBtn: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 4,
+    borderRadius: borderRadius.sm,
+    backgroundColor: colors.surface,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  editOriginBtnText: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.primary,
+  },
+  originEditorBox: {
+    backgroundColor: colors.surface,
+    padding: spacing.sm,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  originEditorLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: colors.primaryDark,
+    marginBottom: 4,
+  },
+  originTextInput: {
+    backgroundColor: '#ffffff',
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    fontSize: typography.sizes.xs,
+    color: colors.text,
+  },
+  routeMetricsRow: {
+    flexDirection: 'row',
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
+  },
+  routeMetricPill: {
+    flex: 1,
+    backgroundColor: colors.surface,
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.xs + 2,
+    paddingHorizontal: spacing.xs,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  routeMetricLabel: {
+    fontSize: 10,
+    color: colors.textSecondary,
+    fontWeight: '600',
+  },
+  routeMetricValue: {
+    fontSize: typography.sizes.sm,
+    fontWeight: '800',
+    color: colors.primaryDark,
+    marginTop: 2,
+  },
+  applyFeesToggleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.xs,
+    marginBottom: spacing.sm,
+    paddingVertical: 2,
+  },
+  miniCheckbox: {
+    width: 18,
+    height: 18,
+    borderRadius: 4,
+    borderWidth: 1.5,
+    borderColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  miniCheckboxChecked: {
+    backgroundColor: colors.primary,
+  },
+  applyFeesToggleText: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    flex: 1,
+  },
+  routeMainActionsRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
+  optimizeRouteBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primary,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: borderRadius.md,
+    gap: 6,
+  },
+  optimizeRouteBtnText: {
+    color: '#ffffff',
+    fontSize: typography.sizes.xs,
+    fontWeight: '800',
+  },
+  openRouteMapBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.goldenBeige,
+    paddingVertical: spacing.sm + 2,
+    borderRadius: borderRadius.md,
+    gap: 6,
+    borderWidth: 1,
+    borderColor: colors.caramel,
+  },
+  openRouteMapBtnText: {
+    color: colors.primaryDark,
+    fontSize: typography.sizes.xs,
+    fontWeight: '800',
+  },
+  btnDisabled: {
+    opacity: 0.5,
+  },
   actionRow: {
     marginBottom: spacing.sm,
   },
@@ -1338,7 +1880,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: colors.primary,
+    backgroundColor: colors.caramel,
     paddingVertical: spacing.sm + 2,
     borderRadius: borderRadius.md,
     gap: spacing.xs,
@@ -1446,6 +1988,20 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.xs - 1,
     fontWeight: '700',
   },
+  distanceTag: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: `${colors.goldenBeige}40`,
+    paddingHorizontal: 6,
+    paddingVertical: 1,
+    borderRadius: borderRadius.sm,
+  },
+  distanceTagText: {
+    fontSize: typography.sizes.xs - 1,
+    color: colors.primaryDark,
+    fontWeight: '700',
+  },
   timeTag: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1507,6 +2063,46 @@ const styles = StyleSheet.create({
     flex: 1,
     lineHeight: 18,
   },
+  stopSuggestedFeeBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: spacing.xs,
+    backgroundColor: `${colors.goldenBeige}25`,
+    borderWidth: 1,
+    borderColor: `${colors.primary}35`,
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    gap: spacing.xs,
+  },
+  stopSuggestedFeeLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    flex: 1,
+  },
+  stopSuggestedFeeText: {
+    fontSize: 11,
+    color: colors.primaryDark,
+    fontWeight: '600',
+  },
+  applyStopFeeBtn: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: borderRadius.sm,
+  },
+  applyStopFeeBtnText: {
+    color: '#ffffff',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  appliedFeeCheckText: {
+    fontSize: 10,
+    color: colors.success,
+    fontWeight: '700',
+  },
   itemsSummaryBox: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1554,6 +2150,7 @@ const styles = StyleSheet.create({
   feeText: {
     fontSize: typography.sizes.xs,
     color: colors.textSecondary,
+    fontWeight: '600',
   },
   driverRow: {
     flexDirection: 'row',
@@ -1718,6 +2315,35 @@ const styles = StyleSheet.create({
   },
   gridCol: {
     flex: 1,
+  },
+  estimateManualFeeBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    marginTop: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+    backgroundColor: `${colors.goldenBeige}35`,
+    borderWidth: 1,
+    borderColor: `${colors.primary}40`,
+  },
+  estimateManualFeeBtnText: {
+    fontSize: typography.sizes.xs,
+    fontWeight: '700',
+    color: colors.primaryDark,
+  },
+  manualFeeEstimateBanner: {
+    marginTop: spacing.xs,
+    backgroundColor: colors.surface,
+    padding: spacing.sm,
+    borderRadius: borderRadius.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  manualFeeEstimateText: {
+    fontSize: 11,
+    color: colors.primaryDark,
   },
   shiftPickerRow: {
     flexDirection: 'row',

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import {
   View,
   Text,
@@ -19,8 +19,31 @@ import { Button } from '../../src/components/ui/Button';
 import { api } from '../../src/services/api';
 import { useAuthStore } from '../../src/stores/auth.store';
 import { formatCurrency } from '../../src/utils/formatters';
-import { Customer, Product, CashAccount, ProductComplement, Coupon, ValidateCouponResult } from '@koki/types';
-import { Plus, Trash2, Calendar, User, ShoppingBag, Wallet, X, Check, Ticket, Tag } from 'lucide-react-native';
+import {
+  Customer,
+  Product,
+  CashAccount,
+  ProductComplement,
+  Coupon,
+  ValidateCouponResult,
+  DeliveryFeeEstimateResult,
+} from '@koki/types';
+import {
+  Plus,
+  Trash2,
+  Calendar,
+  User,
+  ShoppingBag,
+  Wallet,
+  X,
+  Check,
+  Ticket,
+  Tag,
+  Search,
+  UserPlus,
+  MapPin,
+  Sparkles,
+} from 'lucide-react-native';
 
 interface SelectedItem {
   productId: string;
@@ -33,6 +56,14 @@ interface SelectedItem {
   notes?: string;
 }
 
+function normalizeSearchText(str: string): string {
+  return (str || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
 export default function NewOrderScreen() {
   const router = useRouter();
   const params = useLocalSearchParams<{ customerId?: string }>();
@@ -40,17 +71,28 @@ export default function NewOrderScreen() {
   const { company } = useAuthStore();
   const currency = company?.currency || 'EUR';
 
-  // Form State
+  // Customer Autocomplete & Quick Registration State
   const [selectedCustomerId, setSelectedCustomerId] = useState(params.customerId || '');
-  const [newCustomerName, setNewCustomerName] = useState('');
+  const [customerSearchText, setCustomerSearchText] = useState('');
   const [isCreatingCustomer, setIsCreatingCustomer] = useState(false);
+  const [newCustomerName, setNewCustomerName] = useState('');
+  const [newCustomerPhone, setNewCustomerPhone] = useState('');
+  const [newCustomerStreet, setNewCustomerStreet] = useState('');
+  const [newCustomerNumber, setNewCustomerNumber] = useState('');
+  const [newCustomerNeighborhood, setNewCustomerNeighborhood] = useState('');
+  const [newCustomerCity, setNewCustomerCity] = useState('');
+  const [newCustomerPostalCode, setNewCustomerPostalCode] = useState('');
 
+  // Order Form State
   const [items, setItems] = useState<SelectedItem[]>([]);
   const [deliveryDate, setDeliveryDate] = useState(
     new Date(Date.now() + 86400000).toISOString().slice(0, 10),
   ); // tomorrow
   const [deliveryMethod, setDeliveryMethod] = useState<'pickup' | 'delivery'>('pickup');
   const [deliveryFeeCents, setDeliveryFeeCents] = useState(0);
+  const [feeEstimate, setFeeEstimate] = useState<DeliveryFeeEstimateResult | null>(null);
+  const [isEstimatingFee, setIsEstimatingFee] = useState(false);
+
   const [discountCents, setDiscountCents] = useState(0);
   const [couponCodeInput, setCouponCodeInput] = useState('');
   const [appliedCoupon, setAppliedCoupon] = useState<Coupon | null>(null);
@@ -75,7 +117,7 @@ export default function NewOrderScreen() {
   // Fetch Customers
   const { data: customersData } = useQuery<{ items: Customer[] } | Customer[]>({
     queryKey: ['customers-list-mini'],
-    queryFn: () => api.get('/customers?limit=100'),
+    queryFn: () => api.get('/customers?limit=200'),
   });
 
   // Fetch Products
@@ -90,17 +132,153 @@ export default function NewOrderScreen() {
     queryFn: () => api.get('/cash/accounts'),
   });
 
-  const customers: Customer[] = Array.isArray(customersData)
-    ? customersData
-    : (customersData as any)?.items || [];
+  const customers: Customer[] = useMemo(
+    () =>
+      Array.isArray(customersData)
+        ? customersData
+        : (customersData as any)?.items || [],
+    [customersData],
+  );
 
-  const products: Product[] = Array.isArray(productsData)
-    ? productsData
-    : (productsData as any)?.items || [];
+  const products: Product[] = useMemo(
+    () =>
+      Array.isArray(productsData)
+        ? productsData
+        : (productsData as any)?.items || [],
+    [productsData],
+  );
 
-  const accounts: CashAccount[] = Array.isArray(accountsData)
-    ? accountsData
-    : (accountsData as any)?.items || [];
+  const accounts: CashAccount[] = useMemo(
+    () =>
+      Array.isArray(accountsData)
+        ? accountsData
+        : (accountsData as any)?.items || [],
+    [accountsData],
+  );
+
+  const selectedCustomer = useMemo(
+    () => customers.find((c) => c.id === selectedCustomerId) || null,
+    [customers, selectedCustomerId],
+  );
+
+  // Sync customerSearchText when params.customerId loads a customer
+  useEffect(() => {
+    if (selectedCustomer && !customerSearchText) {
+      setCustomerSearchText(selectedCustomer.name);
+    }
+  }, [selectedCustomer]);
+
+  // Filter customers matching what is being typed
+  const matchingCustomers = useMemo(() => {
+    const query = normalizeSearchText(customerSearchText);
+    if (!query) {
+      return customers.slice(0, 6);
+    }
+    return customers
+      .filter((c) => {
+        const nameNorm = normalizeSearchText(c.name);
+        const phoneNorm = normalizeSearchText(c.phone || '');
+        return nameNorm.includes(query) || phoneNorm.includes(query);
+      })
+      .slice(0, 8);
+  }, [customers, customerSearchText]);
+
+  // Estimate delivery fee when customer & deliveryMethod === 'delivery'
+  useEffect(() => {
+    let active = true;
+    const addr = selectedCustomer?.address;
+    const hasAddress = !!(addr?.street || addr?.postalCode || addr?.city || addr?.neighborhood);
+
+    if (deliveryMethod === 'delivery' && hasAddress && addr) {
+      setIsEstimatingFee(true);
+      api
+        .post<DeliveryFeeEstimateResult>('/delivery-planner/estimate-fee', {
+          destinationAddress: {
+            street: addr.street,
+            number: addr.number,
+            neighborhood: addr.neighborhood,
+            city: addr.city,
+            postalCode: addr.postalCode,
+          },
+        })
+        .then((res) => {
+          if (!active) return;
+          setFeeEstimate(res);
+          if (deliveryFeeCents === 0 && res.suggestedFeeCents > 0) {
+            setDeliveryFeeCents(res.suggestedFeeCents);
+          }
+        })
+        .catch(() => {
+          if (active) setFeeEstimate(null);
+        })
+        .finally(() => {
+          if (active) setIsEstimatingFee(false);
+        });
+    } else {
+      setFeeEstimate(null);
+    }
+
+    return () => {
+      active = false;
+    };
+  }, [selectedCustomerId, deliveryMethod, selectedCustomer?.address?.street, selectedCustomer?.address?.postalCode]);
+
+  // Quick Customer Creation Mutation
+  const quickCreateCustomerMutation = useMutation({
+    mutationFn: async () => {
+      const nameToSave = (newCustomerName || customerSearchText).trim();
+      if (!nameToSave) {
+        throw new Error('Informe o nome do cliente para cadastrar.');
+      }
+      const hasAddr =
+        newCustomerStreet.trim() ||
+        newCustomerCity.trim() ||
+        newCustomerPostalCode.trim() ||
+        newCustomerNeighborhood.trim();
+
+      return api.post<Customer>('/customers', {
+        name: nameToSave,
+        phone: newCustomerPhone.trim() || undefined,
+        ...(hasAddr
+          ? {
+              address: {
+                street: newCustomerStreet.trim() || undefined,
+                number: newCustomerNumber.trim() || undefined,
+                neighborhood: newCustomerNeighborhood.trim() || undefined,
+                city: newCustomerCity.trim() || undefined,
+                postalCode: newCustomerPostalCode.trim() || undefined,
+              },
+            }
+          : {}),
+      });
+    },
+    onSuccess: (created) => {
+      queryClient.setQueryData(['customers-list-mini'], (old: any) => {
+        const prevList: Customer[] = Array.isArray(old) ? old : old?.items || [];
+        return [created, ...prevList];
+      });
+      queryClient.invalidateQueries({ queryKey: ['customers-list'] });
+      setSelectedCustomerId(created.id);
+      setCustomerSearchText(created.name);
+      setIsCreatingCustomer(false);
+      setNewCustomerName('');
+      setNewCustomerPhone('');
+      setNewCustomerStreet('');
+      setNewCustomerNumber('');
+      setNewCustomerNeighborhood('');
+      setNewCustomerCity('');
+      setNewCustomerPostalCode('');
+    },
+    onError: (err: any) => {
+      Alert.alert('Erro ao cadastrar cliente', err.message || 'Verifique os dados informados.');
+    },
+  });
+
+  const handleOpenQuickCustomerCreate = () => {
+    setNewCustomerName(customerSearchText.trim());
+    setSelectedCustomerId('');
+    setIsCreatingCustomer(true);
+  };
 
   // Calculate Subtotals & Total
   const itemsTotalCents = items.reduce((acc, item) => acc + item.subtotalCents, 0);
@@ -245,19 +423,37 @@ export default function NewOrderScreen() {
     mutationFn: async () => {
       let customerId = selectedCustomerId;
 
-      // Create customer on the fly if needed
+      // Create customer on the fly if user is in quick-create form or typed a new customer
       if (isCreatingCustomer) {
-        if (!newCustomerName.trim()) {
+        const nameToCreate = (newCustomerName || customerSearchText).trim();
+        if (!nameToCreate) {
           throw new Error('Informe o nome do novo cliente');
         }
+        const hasAddr =
+          newCustomerStreet.trim() ||
+          newCustomerCity.trim() ||
+          newCustomerPostalCode.trim() ||
+          newCustomerNeighborhood.trim();
         const createdCustomer = await api.post<Customer>('/customers', {
-          name: newCustomerName.trim(),
+          name: nameToCreate,
+          phone: newCustomerPhone.trim() || undefined,
+          ...(hasAddr
+            ? {
+                address: {
+                  street: newCustomerStreet.trim() || undefined,
+                  number: newCustomerNumber.trim() || undefined,
+                  neighborhood: newCustomerNeighborhood.trim() || undefined,
+                  city: newCustomerCity.trim() || undefined,
+                  postalCode: newCustomerPostalCode.trim() || undefined,
+                },
+              }
+            : {}),
         });
         customerId = createdCustomer.id;
       }
 
       if (!customerId) {
-        throw new Error('Selecione ou cadastre um cliente');
+        throw new Error('Selecione um cliente na lista ou clique em "Cadastrar cliente"');
       }
 
       if (items.length === 0) {
@@ -297,6 +493,7 @@ export default function NewOrderScreen() {
       queryClient.invalidateQueries({ queryKey: ['orders-list'] });
       queryClient.invalidateQueries({ queryKey: ['dashboard-overview'] });
       queryClient.invalidateQueries({ queryKey: ['cash-summary'] });
+      queryClient.invalidateQueries({ queryKey: ['delivery-daily-plan'] });
       router.back();
     },
     onError: (err: any) => {
@@ -305,14 +502,14 @@ export default function NewOrderScreen() {
   });
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <ScrollView contentContainerStyle={styles.container} keyboardShouldPersistTaps="handled">
       {errorMessage ? (
         <View style={styles.errorBox}>
           <Text style={styles.errorText}>{errorMessage}</Text>
         </View>
       ) : null}
 
-      {/* 1. Cliente */}
+      {/* 1. Cliente (Caixa de texto com busca automática + botão Cadastrar cliente) */}
       <Card style={styles.sectionCard}>
         <View style={styles.sectionHeader}>
           <User size={18} color={colors.primary} />
@@ -320,54 +517,221 @@ export default function NewOrderScreen() {
         </View>
 
         {!isCreatingCustomer ? (
-          <>
-            {customers.length === 0 ? (
-              <Text style={styles.emptyCatalogText}>Nenhum cliente cadastrado.</Text>
-            ) : (
-              <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.customersRow}>
-                {customers.map((c) => {
-                  const isSelected = selectedCustomerId === c.id;
-                  return (
-                    <TouchableOpacity
-                      key={c.id}
-                      onPress={() => setSelectedCustomerId(c.id)}
-                      style={[styles.customerChip, isSelected && styles.customerChipSelected]}
-                    >
-                      <Text
-                        style={[
-                          styles.customerChipText,
-                          isSelected && styles.customerChipTextSelected,
-                        ]}
-                      >
-                        {c.name}
-                      </Text>
-                    </TouchableOpacity>
-                  );
-                })}
-              </ScrollView>
-            )}
-
-            <TouchableOpacity
-              onPress={() => setIsCreatingCustomer(true)}
-              style={styles.switchCustomerBtn}
-            >
-              <Text style={styles.switchCustomerText}>+ Cadastrar novo cliente</Text>
-            </TouchableOpacity>
-          </>
-        ) : (
           <View>
+            {/* Caixa de texto de busca de cliente */}
+            <View style={styles.customerSearchInputWrapper}>
+              <Search size={16} color={colors.textMuted} style={styles.customerSearchIcon} />
+              <TextInput
+                style={styles.customerSearchInput}
+                placeholder="Digite o nome ou telefone do cliente..."
+                placeholderTextColor={colors.textMuted}
+                value={customerSearchText}
+                onChangeText={(text) => {
+                  setCustomerSearchText(text);
+                  if (selectedCustomer && text.trim() !== selectedCustomer.name) {
+                    setSelectedCustomerId('');
+                  }
+                }}
+              />
+              {customerSearchText.length > 0 && (
+                <TouchableOpacity
+                  onPress={() => {
+                    setCustomerSearchText('');
+                    setSelectedCustomerId('');
+                  }}
+                  style={styles.clearSearchBtn}
+                  hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
+                >
+                  <X size={16} color={colors.textMuted} />
+                </TouchableOpacity>
+              )}
+            </View>
+
+            {/* Cliente Selecionado */}
+            {selectedCustomer ? (
+              <View style={styles.selectedCustomerBanner}>
+                <View style={styles.selectedCustomerBadgeIcon}>
+                  <Check size={14} color="#ffffff" />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.selectedCustomerName}>{selectedCustomer.name}</Text>
+                  {selectedCustomer.phone ? (
+                    <Text style={styles.selectedCustomerMeta}>{selectedCustomer.phone}</Text>
+                  ) : null}
+                  {selectedCustomer.address?.street || selectedCustomer.address?.city ? (
+                    <Text style={styles.selectedCustomerMeta} numberOfLines={1}>
+                      📍 {[
+                        selectedCustomer.address?.street,
+                        selectedCustomer.address?.number,
+                        selectedCustomer.address?.neighborhood,
+                        selectedCustomer.address?.city,
+                      ]
+                        .filter(Boolean)
+                        .join(', ')}
+                    </Text>
+                  ) : null}
+                </View>
+                <TouchableOpacity
+                  onPress={() => {
+                    setSelectedCustomerId('');
+                    setCustomerSearchText('');
+                  }}
+                  style={styles.changeCustomerBtn}
+                >
+                  <Text style={styles.changeCustomerBtnText}>Trocar</Text>
+                </TouchableOpacity>
+              </View>
+            ) : (
+              /* Lista de Clientes que correspondem ao texto digitado */
+              <View style={styles.customerMatchesContainer}>
+                {matchingCustomers.length > 0 ? (
+                  <>
+                    <Text style={styles.matchesHeaderLabel}>
+                      {customerSearchText.trim()
+                        ? `Clientes encontrados (${matchingCustomers.length})`
+                        : 'Sugestões de clientes'}
+                    </Text>
+                    <View style={styles.customerMatchesList}>
+                      {matchingCustomers.map((c) => (
+                        <TouchableOpacity
+                          key={c.id}
+                          style={styles.customerMatchItem}
+                          activeOpacity={0.7}
+                          onPress={() => {
+                            setSelectedCustomerId(c.id);
+                            setCustomerSearchText(c.name);
+                          }}
+                        >
+                          <View style={styles.customerMatchAvatar}>
+                            <Text style={styles.customerMatchAvatarText}>
+                              {c.name.charAt(0).toUpperCase()}
+                            </Text>
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.customerMatchName}>{c.name}</Text>
+                            {c.phone || c.address?.street ? (
+                              <Text style={styles.customerMatchSub} numberOfLines={1}>
+                                {[
+                                  c.phone,
+                                  c.address?.street
+                                    ? `${c.address.street}${c.address.number ? `, ${c.address.number}` : ''}`
+                                    : null,
+                                ]
+                                  .filter(Boolean)
+                                  .join(' • ')}
+                              </Text>
+                            ) : null}
+                          </View>
+                          <Text style={styles.selectMatchActionText}>Selecionar</Text>
+                        </TouchableOpacity>
+                      ))}
+                    </View>
+                  </>
+                ) : (
+                  /* Caso não tenha nenhum cliente que corresponda, aparece o botão "Cadastrar cliente" */
+                  <View style={styles.noCustomerMatchBox}>
+                    <Text style={styles.noCustomerMatchText}>
+                      Nenhum cliente encontrado para{' '}
+                      <Text style={{ fontWeight: '700', color: colors.primaryDark }}>
+                        "{customerSearchText.trim()}"
+                      </Text>
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.registerCustomerBtn}
+                      activeOpacity={0.85}
+                      onPress={handleOpenQuickCustomerCreate}
+                    >
+                      <UserPlus size={16} color="#ffffff" />
+                      <Text style={styles.registerCustomerBtnText}>Cadastrar cliente</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              </View>
+            )}
+          </View>
+        ) : (
+          /* Formulário rápido de cadastro de cliente inline */
+          <View style={styles.quickCreateCustomerBox}>
+            <View style={styles.quickCreateHeaderRow}>
+              <Text style={styles.quickCreateTitle}>Novo Cadastro de Cliente</Text>
+              <TouchableOpacity
+                onPress={() => setIsCreatingCustomer(false)}
+                style={styles.switchCustomerBtn}
+              >
+                <Text style={styles.switchCustomerText}>← Voltar para busca</Text>
+              </TouchableOpacity>
+            </View>
+
             <Input
-              label="Nome do Novo Cliente *"
+              label="Nome do Cliente *"
               placeholder="Ex: Ana Beatriz"
               value={newCustomerName}
               onChangeText={setNewCustomerName}
             />
-            <TouchableOpacity
-              onPress={() => setIsCreatingCustomer(false)}
-              style={styles.switchCustomerBtn}
-            >
-              <Text style={styles.switchCustomerText}>← Escolher da lista de clientes</Text>
-            </TouchableOpacity>
+
+            <Input
+              label="Telefone / WhatsApp"
+              placeholder="Ex: +351 912 345 678"
+              value={newCustomerPhone}
+              onChangeText={setNewCustomerPhone}
+              keyboardType="phone-pad"
+            />
+
+            <Text style={styles.quickAddressSectionTitle}>
+              Endereço de Entrega (Opcional — usado para calcular rota e taxa)
+            </Text>
+            <Input
+              label="Rua / Avenida"
+              placeholder="Ex: Rua Augusta"
+              value={newCustomerStreet}
+              onChangeText={setNewCustomerStreet}
+            />
+
+            <View style={styles.quickRowInputs}>
+              <View style={{ flex: 1 }}>
+                <Input
+                  label="Número"
+                  placeholder="Ex: 120"
+                  value={newCustomerNumber}
+                  onChangeText={setNewCustomerNumber}
+                />
+              </View>
+              <View style={{ flex: 1.4 }}>
+                <Input
+                  label="Bairro / Freguesia"
+                  placeholder="Ex: Baixa"
+                  value={newCustomerNeighborhood}
+                  onChangeText={setNewCustomerNeighborhood}
+                />
+              </View>
+            </View>
+
+            <View style={styles.quickRowInputs}>
+              <View style={{ flex: 1.2 }}>
+                <Input
+                  label="Cidade"
+                  placeholder="Ex: Lisboa"
+                  value={newCustomerCity}
+                  onChangeText={setNewCustomerCity}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <Input
+                  label="Código Postal / CEP"
+                  placeholder="Ex: 1100-053"
+                  value={newCustomerPostalCode}
+                  onChangeText={setNewCustomerPostalCode}
+                />
+              </View>
+            </View>
+
+            <Button
+              title="Salvar e Selecionar Cliente"
+              size="sm"
+              loading={quickCreateCustomerMutation.isPending}
+              onPress={() => quickCreateCustomerMutation.mutate()}
+              style={{ marginTop: spacing.xs }}
+            />
           </View>
         )}
       </Card>
@@ -530,12 +894,48 @@ export default function NewOrderScreen() {
         </View>
 
         {deliveryMethod === 'delivery' && (
-          <CurrencyInput
-            label="Taxa de Entrega"
-            cents={deliveryFeeCents}
-            onChangeCents={setDeliveryFeeCents}
-            currency={currency}
-          />
+          <View>
+            <CurrencyInput
+              label="Taxa de Entrega"
+              cents={deliveryFeeCents}
+              onChangeCents={setDeliveryFeeCents}
+              currency={currency}
+            />
+
+            {isEstimatingFee ? (
+              <Text style={styles.feeEstimateHintText}>
+                Calculando distância e taxa sugerida para o endereço do cliente...
+              </Text>
+            ) : feeEstimate ? (
+              <View style={styles.feeSuggestionBanner}>
+                <View style={styles.feeSuggestionLeft}>
+                  <Sparkles size={15} color={colors.primary} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.feeSuggestionTitle}>
+                      Taxa sugerida ({feeEstimate.distanceKm} km • ~{feeEstimate.estimatedDurationMinutes} min):{' '}
+                      <Text style={{ fontWeight: '800', color: colors.primary }}>
+                        {formatCurrency(feeEstimate.suggestedFeeCents, currency)}
+                      </Text>
+                    </Text>
+                    {feeEstimate.destinationFormatted ? (
+                      <Text style={styles.feeSuggestionAddress} numberOfLines={1}>
+                        Destino: {feeEstimate.destinationFormatted}
+                      </Text>
+                    ) : null}
+                  </View>
+                </View>
+
+                {deliveryFeeCents !== feeEstimate.suggestedFeeCents && (
+                  <TouchableOpacity
+                    style={styles.applySuggestedFeeBtn}
+                    onPress={() => setDeliveryFeeCents(feeEstimate.suggestedFeeCents)}
+                  >
+                    <Text style={styles.applySuggestedFeeBtnText}>Aplicar</Text>
+                  </TouchableOpacity>
+                )}
+              </View>
+            ) : null}
+          </View>
         )}
 
         <CurrencyInput
@@ -900,31 +1300,181 @@ const styles = StyleSheet.create({
     color: colors.danger,
     fontSize: typography.sizes.sm,
   },
-  customersRow: {
+  customerSearchInputWrapper: {
     flexDirection: 'row',
-    marginBottom: spacing.sm,
-  },
-  customerChip: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.full,
+    alignItems: 'center',
+    backgroundColor: '#ffffff',
     borderWidth: 1.5,
     borderColor: colors.border,
-    backgroundColor: '#ffffff',
+    borderRadius: borderRadius.md,
+    paddingHorizontal: spacing.sm,
+    height: 46,
+  },
+  customerSearchIcon: {
     marginRight: spacing.xs,
   },
-  customerChipSelected: {
-    borderColor: colors.primary,
-    backgroundColor: `${colors.goldenBeige}30`,
-  },
-  customerChipText: {
-    fontSize: typography.sizes.xs,
+  customerSearchInput: {
+    flex: 1,
+    fontSize: typography.sizes.sm,
+    color: colors.text,
     fontWeight: typography.weights.medium,
-    color: colors.textSecondary,
   },
-  customerChipTextSelected: {
-    color: colors.primary,
+  clearSearchBtn: {
+    padding: 4,
+  },
+  selectedCustomerBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: `${colors.goldenBeige}25`,
+    borderWidth: 1.5,
+    borderColor: colors.primary,
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    marginTop: spacing.sm,
+    gap: spacing.sm,
+  },
+  selectedCustomerBadgeIcon: {
+    width: 26,
+    height: 26,
+    borderRadius: 13,
+    backgroundColor: colors.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  selectedCustomerName: {
+    fontSize: typography.sizes.sm,
     fontWeight: typography.weights.bold,
+    color: colors.primaryDark,
+  },
+  selectedCustomerMeta: {
+    fontSize: 11,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
+  changeCustomerBtn: {
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 5,
+    borderRadius: borderRadius.sm,
+    backgroundColor: '#ffffff',
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  changeCustomerBtnText: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
+    color: colors.primary,
+  },
+  customerMatchesContainer: {
+    marginTop: spacing.sm,
+  },
+  matchesHeaderLabel: {
+    fontSize: 11,
+    fontWeight: typography.weights.semibold,
+    color: colors.textMuted,
+    marginBottom: 6,
+  },
+  customerMatchesList: {
+    borderWidth: 1,
+    borderColor: colors.border,
+    borderRadius: borderRadius.md,
+    backgroundColor: '#ffffff',
+    overflow: 'hidden',
+  },
+  customerMatchItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.surface,
+    gap: spacing.sm,
+  },
+  customerMatchAvatar: {
+    width: 30,
+    height: 30,
+    borderRadius: 15,
+    backgroundColor: `${colors.goldenBeige}40`,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  customerMatchAvatarText: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
+    color: colors.primaryDark,
+  },
+  customerMatchName: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.semibold,
+    color: colors.primaryDark,
+  },
+  customerMatchSub: {
+    fontSize: 11,
+    color: colors.textMuted,
+    marginTop: 1,
+  },
+  selectMatchActionText: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.bold,
+    color: colors.primary,
+  },
+  noCustomerMatchBox: {
+    backgroundColor: `${colors.goldenBeige}20`,
+    borderWidth: 1,
+    borderColor: `${colors.primary}35`,
+    borderStyle: 'dashed',
+    borderRadius: borderRadius.md,
+    padding: spacing.md,
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  noCustomerMatchText: {
+    fontSize: typography.sizes.xs,
+    color: colors.textSecondary,
+    textAlign: 'center',
+  },
+  registerCustomerBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: borderRadius.md,
+    gap: 6,
+  },
+  registerCustomerBtnText: {
+    color: '#ffffff',
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+  },
+  quickCreateCustomerBox: {
+    backgroundColor: `${colors.surface}80`,
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border,
+  },
+  quickCreateHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: spacing.sm,
+  },
+  quickCreateTitle: {
+    fontSize: typography.sizes.sm,
+    fontWeight: typography.weights.bold,
+    color: colors.primaryDark,
+  },
+  quickAddressSectionTitle: {
+    fontSize: 11,
+    fontWeight: typography.weights.bold,
+    color: colors.textSecondary,
+    marginTop: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  quickRowInputs: {
+    flexDirection: 'row',
+    gap: spacing.sm,
   },
   switchCustomerBtn: {
     paddingVertical: spacing.xs,
@@ -933,6 +1483,51 @@ const styles = StyleSheet.create({
     fontSize: typography.sizes.xs,
     fontWeight: typography.weights.bold,
     color: colors.primary,
+  },
+  feeEstimateHintText: {
+    fontSize: 11,
+    color: colors.textMuted,
+    fontStyle: 'italic',
+    marginBottom: spacing.sm,
+  },
+  feeSuggestionBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: `${colors.goldenBeige}30`,
+    borderWidth: 1,
+    borderColor: `${colors.primary}40`,
+    borderRadius: borderRadius.md,
+    padding: spacing.sm,
+    marginBottom: spacing.md,
+    gap: spacing.sm,
+  },
+  feeSuggestionLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flex: 1,
+  },
+  feeSuggestionTitle: {
+    fontSize: typography.sizes.xs,
+    fontWeight: typography.weights.semibold,
+    color: colors.primaryDark,
+  },
+  feeSuggestionAddress: {
+    fontSize: 10,
+    color: colors.textSecondary,
+    marginTop: 1,
+  },
+  applySuggestedFeeBtn: {
+    backgroundColor: colors.primary,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: 6,
+    borderRadius: borderRadius.sm,
+  },
+  applySuggestedFeeBtnText: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: typography.weights.bold,
   },
   productsCatalogRow: {
     flexDirection: 'row',

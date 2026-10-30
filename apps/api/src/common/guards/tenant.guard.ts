@@ -14,6 +14,21 @@ import { Company, CompanyDocument } from '../../modules/companies/schemas/compan
 
 @Injectable()
 export class TenantGuard implements CanActivate {
+  private static tenantCache = new Map<
+    string,
+    { membership: any; company: any; expiresAt: number }
+  >();
+  private static readonly CACHE_TTL_MS = 45_000; // 45 seconds
+
+  static invalidateCompanyCache(companyId: string) {
+    const suffix = `:${companyId}`;
+    for (const key of TenantGuard.tenantCache.keys()) {
+      if (key.endsWith(suffix)) {
+        TenantGuard.tenantCache.delete(key);
+      }
+    }
+  }
+
   constructor(
     private reflector: Reflector,
     @InjectModel(Membership.name)
@@ -67,16 +82,40 @@ export class TenantGuard implements CanActivate {
       throw new ForbiddenException('Identificador de empresa inválido');
     }
 
-    const membership = await this.membershipModel.findOne({
-      userId: new Types.ObjectId(user.id || user._id),
-      companyId: targetCompanyObjectId,
-    });
+    const userIdStr = (user.id || user._id).toString();
+    const companyIdStr = targetCompanyObjectId.toString();
+    const cacheKey = `${userIdStr}:${companyIdStr}`;
+    const now = Date.now();
+    const cached = TenantGuard.tenantCache.get(cacheKey);
+
+    let membership: any;
+    let company: any;
+
+    if (cached && cached.expiresAt > now) {
+      membership = cached.membership;
+      company = cached.company;
+    } else {
+      [membership, company] = await Promise.all([
+        this.membershipModel.findOne({
+          userId: new Types.ObjectId(userIdStr),
+          companyId: targetCompanyObjectId,
+        }),
+        this.companyModel.findById(targetCompanyObjectId),
+      ]);
+
+      if (membership && company) {
+        TenantGuard.tenantCache.set(cacheKey, {
+          membership,
+          company,
+          expiresAt: now + TenantGuard.CACHE_TTL_MS,
+        });
+      }
+    }
 
     if (!membership) {
       throw new ForbiddenException('Você não possui permissão de acesso para esta empresa');
     }
 
-    const company = await this.companyModel.findById(targetCompanyObjectId);
     if (!company) {
       throw new ForbiddenException('Empresa não encontrada');
     }
@@ -85,7 +124,7 @@ export class TenantGuard implements CanActivate {
       throw new ForbiddenException('Acesso suspenso para esta empresa. Contate o suporte.');
     }
 
-    request.companyId = targetCompanyObjectId.toString();
+    request.companyId = companyIdStr;
     request.company = company;
     request.membership = membership;
 

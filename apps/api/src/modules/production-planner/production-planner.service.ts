@@ -118,16 +118,29 @@ export class ProductionPlannerService {
     const windowEnd = new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999));
     windowEnd.setHours(windowEnd.getHours() + 14);
 
-    // 1. Buscar pedidos ativos com entrega prevista para essa data
-    const rawOrders = await this.orderModel
-      .find({
-        companyId: companyObjectId,
-        deletedAt: { $exists: false },
-        operationalStatus: { $ne: 'canceled' },
-        deliveryDate: { $gte: windowStart, $lte: windowEnd },
-      })
-      .sort({ deliveryDate: 1, orderNumber: 1 })
-      .exec();
+    // 1. Buscar pedidos ativos, estoque e fornadas em paralelo
+    const [rawOrders, inventoryItems, batchDocs] = await Promise.all([
+      this.orderModel
+        .find({
+          companyId: companyObjectId,
+          deletedAt: { $exists: false },
+          operationalStatus: { $ne: 'canceled' },
+          deliveryDate: { $gte: windowStart, $lte: windowEnd },
+        })
+        .sort({ deliveryDate: 1, orderNumber: 1 })
+        .exec(),
+      this.inventoryModel
+        .find({ companyId: companyObjectId, deletedAt: { $exists: false } })
+        .exec(),
+      this.batchModel
+        .find({
+          companyId: companyObjectId,
+          date: targetDate,
+          deletedAt: { $exists: false },
+        })
+        .sort({ time: 1, batchNumber: 1 })
+        .exec(),
+    ]);
 
     // Filtrar com precisão exata de dia (ISO ou Local)
     const matchingOrders = rawOrders.filter((o) => {
@@ -233,11 +246,6 @@ export class ProductionPlannerService {
     const recipeMap = new Map<string, RecipeDocument>();
     recipes.forEach((r) => recipeMap.set(r._id.toString(), r));
 
-    // Buscar todos os insumos de estoque para verificar disponibilidade
-    const inventoryItems = await this.inventoryModel
-      .find({ companyId: companyObjectId, deletedAt: { $exists: false } })
-      .exec();
-
     const inventoryMap = new Map<string, InventoryItemDocument>();
     inventoryItems.forEach((inv) => {
       inventoryMap.set(inv._id.toString(), inv);
@@ -301,16 +309,7 @@ export class ProductionPlannerService {
       };
     }).sort((a, b) => (b.isShortage ? 1 : 0) - (a.isShortage ? 1 : 0));
 
-    // 5. Buscar Fornadas / Lotes criados para essa data
-    const batchDocs = await this.batchModel
-      .find({
-        companyId: companyObjectId,
-        date: targetDate,
-        deletedAt: { $exists: false },
-      })
-      .sort({ time: 1, batchNumber: 1 })
-      .exec();
-
+    // 5. Mapear Fornadas / Lotes criados para essa data
     const batches = batchDocs.map((b) => this.mapBatch(b));
 
     // 6. Calcular Métricas do Dia

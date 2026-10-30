@@ -5,6 +5,7 @@ import { DeliveryPlannerService } from './delivery-planner.service';
 import { DeliveryItem, DeliveryItemSchema } from './schemas/delivery-item.schema';
 import { Order, OrderSchema } from '../orders/schemas/order.schema';
 import { Customer, CustomerSchema } from '../customers/schemas/customer.schema';
+import { Company, CompanySchema } from '../companies/schemas/company.schema';
 import { EntitlementsModule } from '../entitlements/entitlements.module';
 import { CompaniesModule } from '../companies/companies.module';
 
@@ -14,6 +15,7 @@ import { CompaniesModule } from '../companies/companies.module';
       { name: DeliveryItem.name, schema: DeliveryItemSchema },
       { name: Order.name, schema: OrderSchema },
       { name: Customer.name, schema: CustomerSchema },
+      { name: Company.name, schema: CompanySchema },
     ]),
     EntitlementsModule,
     CompaniesModule,

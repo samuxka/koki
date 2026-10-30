@@ -67,6 +67,21 @@ export class DeliveryItem {
   @Prop({ required: true, default: 0 })
   deliveryFeeCents: number;
 
+  @Prop()
+  suggestedDeliveryFeeCents?: number;
+
+  @Prop()
+  distanceKm?: number;
+
+  @Prop()
+  routeOrder?: number;
+
+  @Prop()
+  latitude?: number;
+
+  @Prop()
+  longitude?: number;
+
   @Prop({ required: true, default: 0 })
   remainingAmountCents: number;
 

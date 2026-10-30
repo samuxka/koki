@@ -28,36 +28,126 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   needsOnboarding: false,
 
   checkAuth: async () => {
-    set({ isLoading: true });
     try {
-      const token = await storage.getItem('koki_access_token');
+      // 1. Read token and cached session in parallel from storage
+      const [token, cachedUserStr, cachedCompanyStr, savedCompanyId] = await Promise.all([
+        storage.getItem('koki_access_token'),
+        storage.getItem('koki_cached_user'),
+        storage.getItem('koki_cached_company'),
+        storage.getItem('koki_current_company_id'),
+      ]);
+
       if (!token) {
-        set({ user: null, company: null, token: null, isAuthenticated: false, isLoading: false });
+        set({
+          user: null,
+          company: null,
+          token: null,
+          isAuthenticated: false,
+          needsOnboarding: false,
+          isLoading: false,
+        });
         return;
       }
 
-      // Fetch user profile
-      const user = await api.get<User>('/users/me');
-      set({ user, token, isAuthenticated: true });
+      // 2. Instant Hydration (<100ms): if we have cached user/company, unblock UI immediately!
+      let hydratedFromCache = false;
+      if (cachedUserStr) {
+        try {
+          const cachedUser: User = JSON.parse(cachedUserStr);
+          const cachedCompany: Company | null = cachedCompanyStr ? JSON.parse(cachedCompanyStr) : null;
+          hydratedFromCache = true;
+          set({
+            user: cachedUser,
+            company: cachedCompany,
+            token,
+            isAuthenticated: true,
+            needsOnboarding: !cachedUser.currentCompanyId && !cachedCompany,
+            isLoading: false,
+          });
+        } catch {}
+      }
 
-      // If user has a current company, fetch company details
+      if (!hydratedFromCache) {
+        set({ isLoading: true });
+      }
+
+      // 3. Revalidate user & company in parallel (if companyId is known) or swiftly
+      const userPromise = api.get<User>('/users/me');
+      const companyPromise = savedCompanyId
+        ? api.get<Company>('/companies/current').catch(() => null)
+        : Promise.resolve(null);
+
+      const [user, initialCompany] = await Promise.all([userPromise, companyPromise]);
+
+      await storage.setItem('koki_cached_user', JSON.stringify(user));
+
       if (user.currentCompanyId) {
         await storage.setItem('koki_current_company_id', user.currentCompanyId);
-        try {
-          const company = await api.get<Company>('/companies/current');
-          set({ company, needsOnboarding: false });
-        } catch {
-          set({ needsOnboarding: true });
+        let company = initialCompany;
+        if (!company || company.id !== user.currentCompanyId) {
+          try {
+            company = await api.get<Company>('/companies/current');
+          } catch {
+            company = null;
+          }
+        }
+
+        if (company) {
+          await storage.setItem('koki_cached_company', JSON.stringify(company));
+          set({
+            user,
+            company,
+            token,
+            isAuthenticated: true,
+            needsOnboarding: false,
+            isLoading: false,
+          });
+        } else {
+          set({
+            user,
+            company: null,
+            token,
+            isAuthenticated: true,
+            needsOnboarding: true,
+            isLoading: false,
+          });
         }
       } else {
-        set({ needsOnboarding: true });
+        set({
+          user,
+          company: null,
+          token,
+          isAuthenticated: true,
+          needsOnboarding: true,
+          isLoading: false,
+        });
       }
-    } catch {
-      await storage.removeItem('koki_access_token');
-      await storage.removeItem('koki_refresh_token');
-      set({ user: null, company: null, token: null, isAuthenticated: false, needsOnboarding: false });
-    } finally {
-      set({ isLoading: false });
+    } catch (err: any) {
+      // Only wipe session if unauthorized or if we had no cached hydration
+      const isAuthError =
+        err?.message?.includes('401') ||
+        err?.message?.includes('Não autenticado') ||
+        err?.message?.includes('expirado') ||
+        err?.message?.includes('inválido');
+
+      if (isAuthError || !get().user) {
+        await Promise.all([
+          storage.removeItem('koki_access_token'),
+          storage.removeItem('koki_refresh_token'),
+          storage.removeItem('koki_cached_user'),
+          storage.removeItem('koki_cached_company'),
+        ]);
+        set({
+          user: null,
+          company: null,
+          token: null,
+          isAuthenticated: false,
+          needsOnboarding: false,
+          isLoading: false,
+        });
+      } else {
+        set({ isLoading: false });
+      }
     }
   },
 
@@ -70,12 +160,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         user: { id: string; email: string; currentCompanyId?: string | null };
       }>('/auth/login', { email, password });
 
-      await storage.setItem('koki_access_token', data.accessToken);
-      await storage.setItem('koki_refresh_token', data.refreshToken);
-
-      if (data.user.currentCompanyId) {
-        await storage.setItem('koki_current_company_id', data.user.currentCompanyId);
-      }
+      await Promise.all([
+        storage.setItem('koki_access_token', data.accessToken),
+        storage.setItem('koki_refresh_token', data.refreshToken),
+        ...(data.user.currentCompanyId
+          ? [storage.setItem('koki_current_company_id', data.user.currentCompanyId)]
+          : []),
+      ]);
 
       set({ token: data.accessToken, isAuthenticated: true });
       await get().checkAuth();
@@ -93,8 +184,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         user: { id: string; email: string };
       }>('/auth/register', { fullName, email, password, phone });
 
-      await storage.setItem('koki_access_token', data.accessToken);
-      await storage.setItem('koki_refresh_token', data.refreshToken);
+      await Promise.all([
+        storage.setItem('koki_access_token', data.accessToken),
+        storage.setItem('koki_refresh_token', data.refreshToken),
+      ]);
 
       set({ token: data.accessToken, isAuthenticated: true, needsOnboarding: true });
       await get().checkAuth();
@@ -109,9 +202,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const refreshToken = await storage.getItem('koki_refresh_token');
       await api.post('/auth/logout', { refreshToken }).catch(() => {});
     } finally {
-      await storage.removeItem('koki_access_token');
-      await storage.removeItem('koki_refresh_token');
-      await storage.removeItem('koki_current_company_id');
+      await Promise.all([
+        storage.removeItem('koki_access_token'),
+        storage.removeItem('koki_refresh_token'),
+        storage.removeItem('koki_current_company_id'),
+        storage.removeItem('koki_cached_user'),
+        storage.removeItem('koki_cached_company'),
+      ]);
       set({
         user: null,
         company: null,
@@ -124,13 +221,17 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   setCompany: async (company: Company) => {
-    await storage.setItem('koki_current_company_id', company.id);
+    await Promise.all([
+      storage.setItem('koki_current_company_id', company.id),
+      storage.setItem('koki_cached_company', JSON.stringify(company)),
+    ]);
     set({ company, needsOnboarding: false });
   },
 
   refreshCompany: async () => {
     try {
       const company = await api.get<Company>('/companies/current');
+      await storage.setItem('koki_cached_company', JSON.stringify(company));
       set({ company });
     } catch {}
   },

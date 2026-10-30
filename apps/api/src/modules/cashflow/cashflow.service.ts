@@ -200,9 +200,6 @@ export class CashflowService {
   // Summary & Flow Calculation
   async getSummary(companyId: string | Types.ObjectId, startDate?: Date, endDate?: Date): Promise<CashSummary> {
     const companyObjectId = new Types.ObjectId(companyId.toString());
-    const accounts = await this.getAccounts(companyId);
-
-    const consolidatedBalanceCents = accounts.reduce((acc, a) => acc + a.currentBalanceCents, 0);
 
     const dateFilter: Record<string, any> = { companyId: companyObjectId };
     if (startDate || endDate) {
@@ -211,10 +208,19 @@ export class CashflowService {
       if (endDate) dateFilter.date.$lte = endDate;
     }
 
-    const transactions = await this.cashTransactionModel.find({
-      ...dateFilter,
-      type: { $in: ['income', 'expense'] },
-    }).exec();
+    const [accounts, transactions] = await Promise.all([
+      this.getAccounts(companyId),
+      this.cashTransactionModel
+        .find({
+          ...dateFilter,
+          type: { $in: ['income', 'expense'] },
+        })
+        .select('type amountCents')
+        .lean()
+        .exec(),
+    ]);
+
+    const consolidatedBalanceCents = accounts.reduce((acc, a) => acc + a.currentBalanceCents, 0);
 
     let periodIncomeCents = 0;
     let periodExpenseCents = 0;

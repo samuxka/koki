@@ -78,8 +78,26 @@ export class CompaniesController {
       company._id,
       input.monthlySalesGoalCents,
     );
+    TenantGuard.invalidateCompanyCache(company._id.toString());
     return {
       monthlySalesGoalCents: updated.monthlySalesGoalCents,
+    };
+  }
+
+  @ApiOperation({ summary: 'Atualizar dados e endereço da empresa' })
+  @UseGuards(TenantGuard)
+  @Put('current/profile')
+  async updateCompanyProfile(
+    @CurrentCompany() company: any,
+    @Body() body: { tradeName?: string; phone?: string; address?: any },
+  ) {
+    const updated = await this.companiesService.updateProfile(company._id, body);
+    TenantGuard.invalidateCompanyCache(company._id.toString());
+    return {
+      id: updated._id.toString(),
+      tradeName: updated.tradeName,
+      phone: updated.phone,
+      address: updated.address,
     };
   }
 }

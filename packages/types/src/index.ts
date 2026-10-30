@@ -256,6 +256,11 @@ export interface Order {
   couponCode?: string;
   couponId?: string;
   deliveryFeeCents: number;
+  suggestedDeliveryFeeCents?: number;
+  distanceKm?: number;
+  routeOrder?: number;
+  latitude?: number;
+  longitude?: number;
   totalAmountCents: number;
   paidAmountCents: number;
   remainingAmountCents: number;
@@ -784,6 +789,11 @@ export interface DeliveryItem {
   shift: DeliveryShift;
   scheduledTime?: string;
   deliveryFeeCents: number;
+  suggestedDeliveryFeeCents?: number;
+  distanceKm?: number;
+  routeOrder?: number;
+  latitude?: number;
+  longitude?: number;
   remainingAmountCents: number;
   financialStatus: FinancialStatus;
   status: DeliveryStatus;
@@ -794,6 +804,30 @@ export interface DeliveryItem {
   itemsSummary?: string;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface DeliveryRouteSummary {
+  isOptimized: boolean;
+  originAddress?: string;
+  totalDistanceKm: number;
+  estimatedDurationMinutes: number;
+  totalSuggestedFeeCents: number;
+  stopsCount: number;
+  googleMapsRouteUrl?: string;
+}
+
+export interface DeliveryFeeEstimateResult {
+  distanceKm: number;
+  estimatedDurationMinutes: number;
+  suggestedFeeCents: number;
+  originFormatted: string;
+  destinationFormatted: string;
+  breakdown: {
+    baseFeeCents: number;
+    includedKm: number;
+    extraKm: number;
+    ratePerExtraKmCents: number;
+  };
 }
 
 export interface DailyDeliveryPlan {
@@ -809,6 +843,7 @@ export interface DailyDeliveryPlan {
     anytime: DeliveryItem[];
   };
   deliveries: DeliveryItem[];
+  routeSummary?: DeliveryRouteSummary;
   monthlyDeliveriesCount?: number;
   monthlyLimit?: number;
 }
