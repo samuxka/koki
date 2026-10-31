@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   View,
   Text,
@@ -13,7 +13,7 @@ import {
   KeyboardAvoidingView,
   Linking,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -173,6 +173,12 @@ export default function DeliveryPlannerScreen() {
     queryKey: ['delivery-daily-plan', selectedDate],
     queryFn: () => api.get<DailyDeliveryPlan>(`/delivery-planner/daily?date=${selectedDate}`),
   });
+
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch, selectedDate]),
+  );
 
   useEffect(() => {
     if (companyFormattedAddress) {

@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { ProductionBatch, ProductionBatchDocument } from './schemas/production-batch.schema';
 import { Order, OrderDocument } from '../orders/schemas/order.schema';
+import { Customer, CustomerDocument } from '../customers/schemas/customer.schema';
 import { Product, ProductDocument } from '../products/schemas/product.schema';
 import { Recipe, RecipeDocument } from '../recipes/schemas/recipe.schema';
 import { InventoryItem, InventoryItemDocument } from '../inventory/schemas/inventory-item.schema';
@@ -27,6 +28,8 @@ export class ProductionPlannerService {
     private batchModel: Model<ProductionBatchDocument>,
     @InjectModel(Order.name)
     private orderModel: Model<OrderDocument>,
+    @InjectModel(Customer.name)
+    private customerModel: Model<CustomerDocument>,
     @InjectModel(Product.name)
     private productModel: Model<ProductDocument>,
     @InjectModel(Recipe.name)
@@ -153,7 +156,35 @@ export class ProductionPlannerService {
       return isoDate === targetDate || localDate === targetDate;
     });
 
-    const mappedOrders = matchingOrders.map((o) => this.mapOrder(o));
+    // Sincronizar em tempo real com os dados mais recentes do cliente
+    const customerIds = Array.from(
+      new Set(
+        matchingOrders
+          .map((o) => (o.customerId ? o.customerId.toString() : ''))
+          .filter(Boolean),
+      ),
+    ).map((id) => new Types.ObjectId(id));
+
+    const customerDocs =
+      customerIds.length > 0
+        ? await this.customerModel
+            .find({ _id: { $in: customerIds }, companyId: companyObjectId })
+            .select('name phone')
+            .lean()
+            .exec()
+        : [];
+    const customerMap = new Map<string, any>();
+    customerDocs.forEach((c) => customerMap.set(c._id.toString(), c));
+
+    const mappedOrders = matchingOrders.map((o) => {
+      const mapped = this.mapOrder(o);
+      const liveCustomer = mapped.customerId ? customerMap.get(mapped.customerId) : undefined;
+      if (liveCustomer) {
+        mapped.customerName = liveCustomer.name || mapped.customerName;
+        mapped.customerPhone = liveCustomer.phone || mapped.customerPhone;
+      }
+      return mapped;
+    });
 
     // 2. Coletar IDs de produtos dos itens de pedidos
     const productIdsSet = new Set<string>();

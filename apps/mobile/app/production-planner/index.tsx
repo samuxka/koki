@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -12,7 +12,7 @@ import {
   Platform,
   KeyboardAvoidingView,
 } from 'react-native';
-import { useRouter } from 'expo-router';
+import { useRouter, useFocusEffect } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -149,6 +149,12 @@ export default function ProductionPlannerScreen() {
     queryKey: ['production-daily-plan', selectedDate],
     queryFn: () => api.get<DailyProductionPlan>(`/production-planner/daily?date=${selectedDate}`),
   });
+
+  useFocusEffect(
+    useCallback(() => {
+      refetch();
+    }, [refetch, selectedDate]),
+  );
 
   // 2. Mutations
   const toggleBatchMutation = useMutation({

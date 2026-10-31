@@ -101,7 +101,11 @@ export default function EditCustomerScreen() {
     mutationFn: (body: any) => api.put(`/customers/${id}`, body),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['customers'] });
+      queryClient.invalidateQueries({ queryKey: ['customers-list-mini'] });
       queryClient.invalidateQueries({ queryKey: ['customer-detail', id] });
+      queryClient.invalidateQueries({ queryKey: ['orders-list'] });
+      queryClient.invalidateQueries({ queryKey: ['delivery-daily-plan'] });
+      queryClient.invalidateQueries({ queryKey: ['production-daily-plan'] });
       Alert.alert('Sucesso', 'Dados do cliente atualizados com sucesso!');
       router.back();
     },

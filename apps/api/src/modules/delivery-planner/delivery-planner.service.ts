@@ -6,7 +6,6 @@ import { Order, OrderDocument } from '../orders/schemas/order.schema';
 import { Customer, CustomerDocument } from '../customers/schemas/customer.schema';
 import { Company, CompanyDocument } from '../companies/schemas/company.schema';
 import { EntitlementsService } from '../entitlements/entitlements.service';
-import { TenantGuard } from '../../common/guards/tenant.guard';
 import {
   CreateDeliveryItemInput,
   UpdateDeliveryItemInput,
@@ -17,7 +16,6 @@ import {
 import {
   DailyDeliveryPlan,
   DeliveryItem as IDeliveryItem,
-  DeliveryStatus,
   DeliveryShift,
   DeliveryRouteSummary,
   DeliveryFeeEstimateResult,
@@ -146,7 +144,7 @@ export class DeliveryPlannerService {
   }
 
   /**
-   * Hash determinístico de string para gerar deslocamento consistente quando endereço é parcial
+   * Hash determinístico de string para gerar deslocamento local consistente
    */
   private hashString(str: string): number {
     let hash = 2166136261;
@@ -157,40 +155,77 @@ export class DeliveryPlannerService {
     return Math.abs(hash);
   }
 
+  private isDifferentCity(addrA?: any, addrB?: any): boolean {
+    const cityA = (addrA?.city || '').trim().toLowerCase();
+    const cityB = (addrB?.city || '').trim().toLowerCase();
+    return Boolean(cityA && cityB && cityA !== cityB);
+  }
+
   /**
-   * Resolve coordenadas aproximadas ou exatas a partir de um endereço textual ou estruturado
+   * Resolve coordenadas locais realistas ancoradas no ponto de partida da empresa (referenceCoords)
+   * quando o endereço é parcial ou quando não há conexão com Nominatim.
    */
-  private resolveFallbackCoords(addrStr: string, addrObj?: any): GeoCoords {
+  private resolveFallbackCoords(
+    addrStr: string,
+    addrObj?: any,
+    referenceCoords?: GeoCoords,
+    companyAddrObj?: any,
+  ): GeoCoords {
     const normalized = (addrStr || '').toLowerCase().trim();
-    if (!normalized) {
-      return { lat: 38.7223, lng: -9.1393 };
+    const differentCity = this.isDifferentCity(addrObj, companyAddrObj);
+
+    // Se temos as coordenadas da empresa (referenceCoords) e a entrega é na mesma cidade (ou cidade não especificada),
+    // ancoramos diretamente no ponto de partida da empresa para que entregas próximas fiquem a poucos km (0.5km a 3.5km)!
+    if (referenceCoords && !differentCity) {
+      if (!normalized) {
+        return referenceCoords;
+      }
+
+      const sameNeighborhood =
+        Boolean(addrObj?.neighborhood && companyAddrObj?.neighborhood) &&
+        addrObj.neighborhood.trim().toLowerCase() ===
+          companyAddrObj.neighborhood.trim().toLowerCase();
+
+      const samePostalPrefix =
+        Boolean(addrObj?.postalCode && companyAddrObj?.postalCode) &&
+        addrObj.postalCode.replace(/\D/g, '').slice(0, 4) ===
+          companyAddrObj.postalCode.replace(/\D/g, '').slice(0, 4);
+
+      // Raio curto se mesmo bairro/CEP (~0.4km a ~1.5km) ou raio urbano local (~0.7km a ~3.2km)
+      const spread = sameNeighborhood || samePostalPrefix ? 0.012 : 0.024;
+      const h1 = this.hashString(normalized);
+      const h2 = this.hashString(normalized.split('').reverse().join(''));
+      const latDelta = ((h1 % 1000) / 1000 - 0.5) * spread;
+      const lngDelta = ((h2 % 1000) / 1000 - 0.5) * spread;
+
+      return {
+        lat: Number((referenceCoords.lat + latDelta).toFixed(6)),
+        lng: Number((referenceCoords.lng + lngDelta).toFixed(6)),
+      };
     }
 
-    // 1. Verificar código postal Português (XXXX-XXX) ou Brasileiro (XXXXX-XXX)
-    const postalMatch = normalized.match(/\b(\d{4,5})-?(\d{3})\b/);
+    if (!normalized) {
+      return referenceCoords || { lat: 38.7223, lng: -9.1393 };
+    }
+
+    // 1. Verificar código postal Português (XXXX-XXX)
+    const postalMatch = normalized.match(/\b(\d{4})-(\d{3})\b/);
     if (postalMatch) {
-      const prefix = parseInt(postalMatch[1].slice(0, 4), 10);
+      const prefix = parseInt(postalMatch[1], 10);
       const suffix = parseInt(postalMatch[2], 10);
       if (prefix >= 1000 && prefix <= 1999) {
-        // Grande Lisboa
-        const latOffset = ((prefix - 1000) / 1000) * 0.08 + ((suffix % 100) / 100) * 0.015;
-        const lngOffset = (((prefix % 100) - 50) / 100) * 0.08 + ((suffix % 37) / 37) * 0.015;
+        const latOffset = ((prefix - 1000) / 1000) * 0.04 + ((suffix % 100) / 100) * 0.008;
+        const lngOffset = (((prefix % 100) - 50) / 100) * 0.04 + ((suffix % 37) / 37) * 0.008;
         return { lat: 38.715 + latOffset, lng: -9.145 + lngOffset };
-      } else if (prefix >= 2000 && prefix <= 2999) {
-        // Arredores de Lisboa / Margem Sul / Sintra / Cascais
-        const latOffset = ((prefix - 2500) / 1000) * 0.14;
-        const lngOffset = (((suffix % 100) - 50) / 100) * 0.12;
-        return { lat: 38.73 + latOffset, lng: -9.22 + lngOffset };
       } else if (prefix >= 4000 && prefix <= 4999) {
-        // Grande Porto
-        const latOffset = ((prefix - 4000) / 1000) * 0.08 + ((suffix % 100) / 100) * 0.015;
-        const lngOffset = (((prefix % 100) - 50) / 100) * 0.08;
+        const latOffset = ((prefix - 4000) / 1000) * 0.04 + ((suffix % 100) / 100) * 0.008;
+        const lngOffset = (((prefix % 100) - 50) / 100) * 0.04;
         return { lat: 41.155 + latOffset, lng: -8.625 + lngOffset };
       }
     }
 
     // 2. Procurar cidade ou bairro conhecido
-    let base: GeoCoords = { lat: 38.7223, lng: -9.1393 };
+    let base: GeoCoords = referenceCoords || { lat: 38.7223, lng: -9.1393 };
     for (const [key, coords] of Object.entries(KNOWN_LOCATIONS)) {
       if (
         normalized.includes(key) ||
@@ -202,11 +237,10 @@ export class DeliveryPlannerService {
       }
     }
 
-    // 3. Deslocamento determinístico pela rua e número (raio de ~0.5km a ~6.5km)
     const h1 = this.hashString(normalized);
     const h2 = this.hashString(normalized.split('').reverse().join(''));
-    const latDelta = (((h1 % 1000) / 1000) - 0.5) * 0.065;
-    const lngDelta = (((h2 % 1000) / 1000) - 0.5) * 0.065;
+    const latDelta = ((h1 % 1000) / 1000 - 0.5) * 0.024;
+    const lngDelta = ((h2 % 1000) / 1000 - 0.5) * 0.024;
 
     return {
       lat: Number((base.lat + latDelta).toFixed(6)),
@@ -214,13 +248,34 @@ export class DeliveryPlannerService {
     };
   }
 
-  private async geocodeAddress(addrStr: string, addrObj?: any): Promise<GeoCoords> {
+  /**
+   * Geocodifica um endereço (com contextualização automática da cidade da empresa quando aplicável)
+   */
+  private async geocodeAddress(
+    addrStr: string,
+    addrObj?: any,
+    referenceCoords?: GeoCoords,
+    companyAddrObj?: any,
+  ): Promise<GeoCoords> {
     const clean = (addrStr || '').trim();
     if (!clean) {
-      return { lat: 38.7223, lng: -9.1393 };
+      return referenceCoords || { lat: 38.7223, lng: -9.1393 };
     }
 
-    const cacheKey = clean.toLowerCase();
+    // Se o endereço do cliente não informou cidade mas a empresa tem cidade cadastrada,
+    // adicionamos a cidade da empresa na consulta de geocodificação para não buscar em outro estado/país!
+    let queryStr = clean;
+    if (
+      companyAddrObj?.city &&
+      !addrObj?.city &&
+      !clean.toLowerCase().includes(companyAddrObj.city.trim().toLowerCase())
+    ) {
+      queryStr = `${clean}, ${companyAddrObj.city.trim()}`;
+    }
+
+    const cacheKey = `${queryStr.toLowerCase()}|ref:${
+      referenceCoords ? `${referenceCoords.lat.toFixed(3)},${referenceCoords.lng.toFixed(3)}` : 'none'
+    }`;
     const cached = DeliveryPlannerService.geocodeCache.get(cacheKey);
     if (cached) {
       return cached;
@@ -229,7 +284,7 @@ export class DeliveryPlannerService {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 1600);
-      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(clean)}`;
+      const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(queryStr)}`;
       const res = await fetch(url, {
         headers: {
           'User-Agent': 'KokiConfeitariaSaaS/1.0',
@@ -242,29 +297,36 @@ export class DeliveryPlannerService {
       if (res.ok) {
         const data: any = await res.json();
         if (Array.isArray(data) && data.length > 0 && data[0].lat && data[0].lon) {
-          const coords = {
+          const candidate: GeoCoords = {
             lat: parseFloat(data[0].lat),
             lng: parseFloat(data[0].lon),
           };
-          DeliveryPlannerService.geocodeCache.set(cacheKey, coords);
-          return coords;
+
+          // Proteção anti-falso-positivo: se a entrega é na mesma cidade da empresa (ou sem cidade diferente informada)
+          // e o Nominatim retornou uma rua homônima a mais de 25 km de distância, descartamos o falso-positivo!
+          if (referenceCoords && !this.isDifferentCity(addrObj, companyAddrObj)) {
+            const straightDist = this.calculateStraightDistanceKm(referenceCoords, candidate);
+            if (straightDist <= 25) {
+              DeliveryPlannerService.geocodeCache.set(cacheKey, candidate);
+              return candidate;
+            }
+          } else {
+            DeliveryPlannerService.geocodeCache.set(cacheKey, candidate);
+            return candidate;
+          }
         }
       }
     } catch {
-      // Fallback determinístico imediato se sem rede ou timeout
+      // Fallback determinístico local se sem rede ou timeout
     }
 
-    const fallback = this.resolveFallbackCoords(clean, addrObj);
+    const fallback = this.resolveFallbackCoords(clean, addrObj, referenceCoords, companyAddrObj);
     DeliveryPlannerService.geocodeCache.set(cacheKey, fallback);
     return fallback;
   }
 
-  /**
-   * Calcula distância rodoviária estimada (Haversine * fator de vias urbanas 1.32) em km
-   */
-  private calculateDrivingDistanceKm(a: GeoCoords, b: GeoCoords, sameAddress = false): number {
-    if (sameAddress) return 0.5;
-    const R = 6371; // Raio da Terra em km
+  private calculateStraightDistanceKm(a: GeoCoords, b: GeoCoords): number {
+    const R = 6371;
     const dLat = ((b.lat - a.lat) * Math.PI) / 180;
     const dLng = ((b.lng - a.lng) * Math.PI) / 180;
     const sinDLat = Math.sin(dLat / 2);
@@ -275,9 +337,18 @@ export class DeliveryPlannerService {
         Math.cos((b.lat * Math.PI) / 180) *
         sinDLng *
         sinDLng;
-    const straightKm = R * (2 * Math.atan2(Math.sqrt(c), Math.sqrt(1 - c)));
-    const roadKm = straightKm * 1.32;
-    return Math.max(0.8, Math.min(60, Number(roadKm.toFixed(1))));
+    return R * (2 * Math.atan2(Math.sqrt(c), Math.sqrt(1 - c)));
+  }
+
+  /**
+   * Calcula distância rodoviária estimada (Haversine * fator de vias urbanas 1.28) em km
+   */
+  private calculateDrivingDistanceKm(a: GeoCoords, b: GeoCoords, sameAddress = false): number {
+    if (sameAddress) return 0.5;
+    const straightKm = this.calculateStraightDistanceKm(a, b);
+    if (straightKm < 0.05) return 0.5;
+    const roadKm = straightKm * 1.28;
+    return Math.max(0.5, Math.min(45, Number(roadKm.toFixed(1))));
   }
 
   /**
@@ -352,7 +423,7 @@ export class DeliveryPlannerService {
   }
 
   /**
-   * Obtém o plano diário de entregas (com sincronização automática de pedidos agendados e cálculo de rota/taxas)
+   * Obtém o plano diário de entregas (com sincronização contínua em tempo real de pedidos e clientes)
    */
   async getDailyDeliveries(companyId: string | Types.ObjectId, dateStr?: string): Promise<DailyDeliveryPlan> {
     const companyObjectId = new Types.ObjectId(companyId.toString());
@@ -387,7 +458,6 @@ export class DeliveryPlannerService {
           date: targetDate,
           deletedAt: { $exists: false },
         })
-        .select('orderId')
         .lean()
         .exec(),
       this.companyModel.findById(companyObjectId).select('address tradeName').lean().exec(),
@@ -395,7 +465,7 @@ export class DeliveryPlannerService {
     ]);
 
     const originAddress = this.buildFormattedAddress(company?.address) || 'Centro, Lisboa';
-    const originCoords = this.resolveFallbackCoords(originAddress, company?.address);
+    const originCoords = await this.geocodeAddress(originAddress, company?.address);
 
     const matchingOrders = rawOrders.filter((o) => {
       if (!o.deliveryDate) return false;
@@ -408,42 +478,70 @@ export class DeliveryPlannerService {
       return isoDate === targetDate || localDate === targetDate;
     });
 
-    // 2. Auto-sincronizar pedidos que ainda não possuem DeliveryItem
+    // 2. Sincronizar pedidos novos E atualizar pedidos existentes caso cliente ou pedido tenha sido editado!
     if (matchingOrders.length > 0) {
-      const existingOrderIds = new Set(
-        existingDeliveries.map((d) => (d.orderId ? d.orderId.toString() : '')),
-      );
+      const allCustomerIds = Array.from(
+        new Set(
+          matchingOrders
+            .map((o) => (o.customerId ? o.customerId.toString() : ''))
+            .filter(Boolean),
+        ),
+      ).map((id) => new Types.ObjectId(id));
 
-      const unsyncedOrders = matchingOrders.filter(
-        (o) => !existingOrderIds.has(o._id.toString()),
-      );
+      const customers =
+        allCustomerIds.length > 0
+          ? await this.customerModel
+              .find({ _id: { $in: allCustomerIds } })
+              .lean()
+              .exec()
+          : [];
 
-      if (unsyncedOrders.length > 0) {
-        const customerIds = unsyncedOrders.map((o) => o.customerId);
-        const customers = await this.customerModel
-          .find({ _id: { $in: customerIds } })
-          .lean()
-          .exec();
+      const customerMap = new Map<string, any>();
+      customers.forEach((c) => customerMap.set(c._id.toString(), c));
 
-        const customerMap = new Map<string, any>();
-        customers.forEach((c) => customerMap.set(c._id.toString(), c));
+      const existingByOrderId = new Map<string, any>();
+      existingDeliveries.forEach((d) => {
+        if (d.orderId) {
+          existingByOrderId.set(d.orderId.toString(), d);
+        }
+      });
 
-        const docsToInsert: any[] = [];
+      const docsToInsert: any[] = [];
+      const syncBulkOps: any[] = [];
 
-        for (const order of unsyncedOrders) {
-          const customer = customerMap.get(order.customerId.toString());
-          const addr = customer?.address || {};
-          const formattedAddress = this.buildFormattedAddress(addr);
-          const stopCoords = this.resolveFallbackCoords(
-            formattedAddress || order.customerName,
+      for (const order of matchingOrders) {
+        const orderIdStr = order._id.toString();
+        const customer = order.customerId
+          ? customerMap.get(order.customerId.toString())
+          : undefined;
+        const addr = customer?.address || {};
+        const formattedAddress = this.buildFormattedAddress(addr);
+        const latestCustomerName = customer?.name || order.customerName;
+        const latestCustomerPhone = customer?.phone || order.customerPhone;
+        const itemsSummary = (order.items || [])
+          .map((it: any) => `${it.quantity}x ${it.productName}${it.flavor ? ` (${it.flavor})` : ''}`)
+          .join(', ');
+        const orderItemsCount = (order.items || []).reduce(
+          (s: number, it: any) => s + it.quantity,
+          0,
+        );
+
+        const existingDelivery = existingByOrderId.get(orderIdStr);
+
+        if (!existingDelivery) {
+          // Inserir nova parada sincronizada do pedido
+          const stopCoords = await this.geocodeAddress(
+            formattedAddress || latestCustomerName,
             addr,
+            originCoords,
+            company?.address,
           );
-          const distanceKm = this.calculateDrivingDistanceKm(originCoords, stopCoords);
+          const distanceKm = this.calculateDrivingDistanceKm(
+            originCoords,
+            stopCoords,
+            Boolean(formattedAddress && formattedAddress.toLowerCase() === originAddress.toLowerCase()),
+          );
           const suggestedDeliveryFeeCents = this.calculateSuggestedFeeCents(distanceKm);
-
-          const itemsSummary = (order.items || [])
-            .map((it: any) => `${it.quantity}x ${it.productName}${it.flavor ? ` (${it.flavor})` : ''}`)
-            .join(', ');
 
           let shift: DeliveryShift = 'morning';
           let scheduledTime: string | undefined;
@@ -467,8 +565,8 @@ export class DeliveryPlannerService {
             date: targetDate,
             orderId: order._id,
             orderNumber: order.orderNumber,
-            customerName: order.customerName,
-            customerPhone: order.customerPhone || customer?.phone,
+            customerName: latestCustomerName,
+            customerPhone: latestCustomerPhone,
             address: {
               street: addr.street,
               number: addr.number,
@@ -488,15 +586,91 @@ export class DeliveryPlannerService {
             remainingAmountCents: order.remainingAmountCents || 0,
             financialStatus: order.financialStatus,
             status: order.operationalStatus === 'delivered' ? 'delivered' : 'pending',
-            orderItemsCount: (order.items || []).reduce((s: number, it: any) => s + it.quantity, 0),
+            orderItemsCount,
             itemsSummary,
             notes: order.notes,
           });
-        }
+        } else {
+          // Verificar se o cliente ou o pedido teve alterações (endereço, nome, telefone, itens, valores ou distância antiga incorreta)
+          const oldFormatted = existingDelivery.address?.formattedAddress || '';
+          const addressChanged = formattedAddress !== oldFormatted;
+          const nameChanged = latestCustomerName !== existingDelivery.customerName;
+          const phoneChanged = (latestCustomerPhone || '') !== (existingDelivery.customerPhone || '');
+          const itemsChanged = itemsSummary !== (existingDelivery.itemsSummary || '');
+          const financialsChanged =
+            (order.remainingAmountCents || 0) !== (existingDelivery.remainingAmountCents || 0) ||
+            order.financialStatus !== existingDelivery.financialStatus;
 
-        if (docsToInsert.length > 0) {
-          await this.deliveryModel.insertMany(docsToInsert);
+          // Se a distância salva era >= 25km na mesma cidade (resquício de fallback antigo), recalcular!
+          const hasAnomalousDistance =
+            existingDelivery.distanceKm === undefined ||
+            (existingDelivery.distanceKm >= 25 &&
+              !this.isDifferentCity(addr, company?.address));
+
+          if (
+            addressChanged ||
+            nameChanged ||
+            phoneChanged ||
+            itemsChanged ||
+            financialsChanged ||
+            hasAnomalousDistance
+          ) {
+            const setFields: Record<string, any> = {
+              customerName: latestCustomerName,
+              customerPhone: latestCustomerPhone,
+              itemsSummary,
+              orderItemsCount,
+              remainingAmountCents: order.remainingAmountCents || 0,
+              financialStatus: order.financialStatus,
+            };
+
+            if (addressChanged || hasAnomalousDistance) {
+              const targetAddr = formattedAddress ? addr : existingDelivery.address || addr;
+              const targetFormatted =
+                formattedAddress || this.buildFormattedAddress(targetAddr);
+              const stopCoords = await this.geocodeAddress(
+                targetFormatted || latestCustomerName,
+                targetAddr,
+                originCoords,
+                company?.address,
+              );
+              const distanceKm = this.calculateDrivingDistanceKm(
+                originCoords,
+                stopCoords,
+                Boolean(targetFormatted && targetFormatted.toLowerCase() === originAddress.toLowerCase()),
+              );
+              const suggestedDeliveryFeeCents = this.calculateSuggestedFeeCents(distanceKm);
+
+              setFields.address = {
+                street: targetAddr?.street,
+                number: targetAddr?.number,
+                complement: targetAddr?.complement,
+                neighborhood: targetAddr?.neighborhood,
+                city: targetAddr?.city,
+                postalCode: targetAddr?.postalCode,
+                formattedAddress: targetFormatted,
+              };
+              setFields.latitude = stopCoords.lat;
+              setFields.longitude = stopCoords.lng;
+              setFields.distanceKm = distanceKm;
+              setFields.suggestedDeliveryFeeCents = suggestedDeliveryFeeCents;
+            }
+
+            syncBulkOps.push({
+              updateOne: {
+                filter: { _id: existingDelivery._id },
+                update: { $set: setFields },
+              },
+            });
+          }
         }
+      }
+
+      if (docsToInsert.length > 0) {
+        await this.deliveryModel.insertMany(docsToInsert);
+      }
+      if (syncBulkOps.length > 0) {
+        await this.deliveryModel.bulkWrite(syncBulkOps);
       }
     }
 
@@ -521,26 +695,39 @@ export class DeliveryPlannerService {
       }),
     ]);
 
-    // Garantir que todas as entregas tenham distância e sugestão de taxa calculadas com base no endereço da empresa
-    const mappedDeliveries = deliveryDocs.map((d) => {
-      const item = this.mapDelivery(d);
-      if (
-        item.routeOrder === undefined ||
-        item.distanceKm === undefined ||
-        item.suggestedDeliveryFeeCents === undefined
-      ) {
-        const addrText =
-          item.address.formattedAddress ||
-          this.buildFormattedAddress(item.address) ||
-          item.customerName;
-        const coords = this.resolveFallbackCoords(addrText, item.address);
-        item.latitude = coords.lat;
-        item.longitude = coords.lng;
-        item.distanceKm = this.calculateDrivingDistanceKm(originCoords, coords);
-        item.suggestedDeliveryFeeCents = this.calculateSuggestedFeeCents(item.distanceKm);
-      }
-      return item;
-    });
+    // Garantir que todas as entregas (incluindo manuais) tenham distância precisa em relação ao endereço da empresa
+    const mappedDeliveries = await Promise.all(
+      deliveryDocs.map(async (d) => {
+        const item = this.mapDelivery(d);
+        const needsRecalc =
+          item.routeOrder === undefined ||
+          item.distanceKm === undefined ||
+          item.suggestedDeliveryFeeCents === undefined ||
+          (item.distanceKm >= 25 && !this.isDifferentCity(item.address, company?.address));
+
+        if (needsRecalc) {
+          const addrText =
+            item.address.formattedAddress ||
+            this.buildFormattedAddress(item.address) ||
+            item.customerName;
+          const coords = await this.geocodeAddress(
+            addrText,
+            item.address,
+            originCoords,
+            company?.address,
+          );
+          item.latitude = coords.lat;
+          item.longitude = coords.lng;
+          item.distanceKm = this.calculateDrivingDistanceKm(
+            originCoords,
+            coords,
+            Boolean(addrText && addrText.toLowerCase() === originAddress.toLowerCase()),
+          );
+          item.suggestedDeliveryFeeCents = this.calculateSuggestedFeeCents(item.distanceKm);
+        }
+        return item;
+      }),
+    );
 
     // Ordenar por routeOrder (se otimizado) ou horário
     mappedDeliveries.sort((a, b) => {
@@ -640,10 +827,13 @@ export class DeliveryPlannerService {
       throw new BadRequestException('Informe o endereço do cliente para calcular a rota e a taxa.');
     }
 
-    const [originCoords, destCoords] = await Promise.all([
-      this.geocodeAddress(originFormatted, company?.address),
-      this.geocodeAddress(destinationFormatted, input.destinationAddress),
-    ]);
+    const originCoords = await this.geocodeAddress(originFormatted, company?.address);
+    const destCoords = await this.geocodeAddress(
+      destinationFormatted,
+      input.destinationAddress,
+      originCoords,
+      company?.address,
+    );
 
     const distanceKm = this.calculateDrivingDistanceKm(
       originCoords,
@@ -687,7 +877,7 @@ export class DeliveryPlannerService {
   ): Promise<DailyDeliveryPlan> {
     const companyObjectId = new Types.ObjectId(companyId.toString());
 
-    // Garantir que os pedidos do dia já estejam sincronizados
+    // Garantir que os pedidos e endereços de clientes do dia já estejam sincronizados
     await this.getDailyDeliveries(companyId, input.date);
 
     const company = await this.companyModel
@@ -716,16 +906,25 @@ export class DeliveryPlannerService {
       throw new BadRequestException('Não há entregas neste período para otimizar a rota.');
     }
 
-    // Resolver coordenadas de todas as paradas em paralelo
+    // Resolver coordenadas de todas as paradas em paralelo (ancoradas na região da empresa)
     const stopsWithCoords = await Promise.all(
       deliveries.map(async (doc) => {
         const addrText =
           doc.address?.formattedAddress ||
           this.buildFormattedAddress(doc.address) ||
           doc.customerName;
-        const coords = await this.geocodeAddress(addrText, doc.address);
+        const coords = await this.geocodeAddress(
+          addrText,
+          doc.address,
+          originCoords,
+          company?.address,
+        );
         // Distância direta da loja até o cliente (para cálculo justo da taxa de entrega do cliente)
-        const directDistanceFromStoreKm = this.calculateDrivingDistanceKm(originCoords, coords);
+        const directDistanceFromStoreKm = this.calculateDrivingDistanceKm(
+          originCoords,
+          coords,
+          Boolean(addrText && addrText.toLowerCase() === originFormatted.toLowerCase()),
+        );
         const suggestedFeeCents = this.calculateSuggestedFeeCents(
           directDistanceFromStoreKm,
           input.baseFeeCents ?? DeliveryPlannerService.DEFAULT_BASE_FEE_CENTS,
@@ -894,13 +1093,13 @@ export class DeliveryPlannerService {
     let suggested = delivery.suggestedDeliveryFeeCents;
     if (!suggested) {
       const company = await this.companyModel.findById(companyObjectId).select('address').lean();
-      const originCoords = this.resolveFallbackCoords(
-        this.buildFormattedAddress(company?.address) || 'Centro, Lisboa',
-        company?.address,
-      );
-      const stopCoords = this.resolveFallbackCoords(
+      const originFormatted = this.buildFormattedAddress(company?.address) || 'Centro, Lisboa';
+      const originCoords = await this.geocodeAddress(originFormatted, company?.address);
+      const stopCoords = await this.geocodeAddress(
         delivery.address?.formattedAddress || this.buildFormattedAddress(delivery.address),
         delivery.address,
+        originCoords,
+        company?.address,
       );
       const dist = this.calculateDrivingDistanceKm(originCoords, stopCoords);
       suggested = this.calculateSuggestedFeeCents(dist);
@@ -969,13 +1168,13 @@ export class DeliveryPlannerService {
       input.address?.formattedAddress || this.buildFormattedAddress(input.address);
 
     const company = await this.companyModel.findById(companyObjectId).select('address').lean();
-    const originCoords = this.resolveFallbackCoords(
-      this.buildFormattedAddress(company?.address) || 'Centro, Lisboa',
-      company?.address,
-    );
+    const originFormatted = this.buildFormattedAddress(company?.address) || 'Centro, Lisboa';
+    const originCoords = await this.geocodeAddress(originFormatted, company?.address);
     const stopCoords = await this.geocodeAddress(
       formattedAddress || input.customerName,
       input.address,
+      originCoords,
+      company?.address,
     );
     const distanceKm = input.distanceKm ?? this.calculateDrivingDistanceKm(originCoords, stopCoords);
     const suggestedDeliveryFeeCents =
@@ -1050,11 +1249,14 @@ export class DeliveryPlannerService {
         formattedAddress,
       };
       const company = await this.companyModel.findById(companyObjectId).select('address').lean();
-      const originCoords = this.resolveFallbackCoords(
-        this.buildFormattedAddress(company?.address) || 'Centro, Lisboa',
+      const originFormatted = this.buildFormattedAddress(company?.address) || 'Centro, Lisboa';
+      const originCoords = await this.geocodeAddress(originFormatted, company?.address);
+      const stopCoords = await this.geocodeAddress(
+        formattedAddress,
+        input.address,
+        originCoords,
         company?.address,
       );
-      const stopCoords = await this.geocodeAddress(formattedAddress, input.address);
       delivery.latitude = stopCoords.lat;
       delivery.longitude = stopCoords.lng;
       delivery.distanceKm = this.calculateDrivingDistanceKm(originCoords, stopCoords);

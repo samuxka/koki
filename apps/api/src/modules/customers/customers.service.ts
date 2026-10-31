@@ -3,6 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Customer, CustomerDocument } from './schemas/customer.schema';
 import { Order, OrderDocument } from '../orders/schemas/order.schema';
+import { DeliveryItem, DeliveryItemDocument } from '../delivery-planner/schemas/delivery-item.schema';
 import { CreateCustomerInput, LoyaltyCardInput } from '@koki/validation';
 import { CustomerSortBy, CustomerFilterType } from '@koki/types';
 
@@ -13,6 +14,8 @@ export class CustomersService {
     private customerModel: Model<CustomerDocument>,
     @InjectModel(Order.name)
     private orderModel: Model<OrderDocument>,
+    @InjectModel(DeliveryItem.name)
+    private deliveryModel: Model<DeliveryItemDocument>,
   ) {}
 
   async findAll(
@@ -249,10 +252,13 @@ export class CustomersService {
     id: string,
     input: Partial<CreateCustomerInput>,
   ): Promise<CustomerDocument> {
+    const companyObjectId = new Types.ObjectId(companyId.toString());
+    const customerObjectId = new Types.ObjectId(id);
+
     const customer = await this.customerModel.findOneAndUpdate(
       {
-        _id: new Types.ObjectId(id),
-        companyId: new Types.ObjectId(companyId.toString()),
+        _id: customerObjectId,
+        companyId: companyObjectId,
         deletedAt: { $exists: false },
       },
       {
@@ -272,6 +278,73 @@ export class CustomersService {
     if (!customer) {
       throw new NotFoundException('Cliente não encontrado');
     }
+
+    // Propagate updated customer name, phone, and address to active Orders and DeliveryItems
+    const customerOrders = await this.orderModel
+      .find({
+        companyId: companyObjectId,
+        customerId: customerObjectId,
+        deletedAt: { $exists: false },
+      })
+      .select('_id')
+      .lean()
+      .exec();
+
+    if (customerOrders.length > 0) {
+      const orderIds = customerOrders.map((o) => o._id);
+
+      await this.orderModel.updateMany(
+        { _id: { $in: orderIds }, companyId: companyObjectId },
+        {
+          $set: {
+            customerName: customer.name,
+            customerPhone: customer.phone,
+          },
+        },
+      );
+
+      const addr = customer.address || {};
+      const parts: string[] = [];
+      if (addr.street) {
+        parts.push(addr.street + (addr.number ? `, ${addr.number}` : ''));
+      }
+      if (addr.complement) parts.push(addr.complement);
+      if (addr.neighborhood) parts.push(addr.neighborhood);
+      if (addr.city) parts.push(addr.city);
+      if (addr.postalCode) parts.push(addr.postalCode);
+      const formattedAddress = parts.join(' - ');
+
+      await this.deliveryModel.updateMany(
+        {
+          companyId: companyObjectId,
+          orderId: { $in: orderIds },
+          deletedAt: { $exists: false },
+        },
+        {
+          $set: {
+            customerName: customer.name,
+            customerPhone: customer.phone,
+            address: {
+              street: addr.street,
+              number: addr.number,
+              complement: addr.complement,
+              neighborhood: addr.neighborhood,
+              city: addr.city,
+              postalCode: addr.postalCode,
+              formattedAddress,
+            },
+          },
+          $unset: {
+            latitude: 1,
+            longitude: 1,
+            distanceKm: 1,
+            suggestedDeliveryFeeCents: 1,
+            routeOrder: 1,
+          },
+        },
+      );
+    }
+
     return customer;
   }
 
